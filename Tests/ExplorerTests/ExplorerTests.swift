@@ -125,6 +125,23 @@ final class ExplorerTests: XCTestCase {
         XCTAssertEqual(s.undoStack.count, 1)
     }
 
+    func testShiftArrowGrowsUpward() async throws {
+        for n in ["a", "b", "c"] { try touch(n) }
+        let s = ExplorerState(start: dir); await settle()
+        s.click(s.displayed[2], shift: false, toggle: false)
+        s.moveSelection(-1, extend: true); s.moveSelection(-1, extend: true)
+        XCTAssertEqual(s.selectedItems.map(\.name), ["a", "b", "c"])
+    }
+
+    func testDropIntoOwnFolderDoesNothing() async throws {
+        try touch("k.txt")
+        let s = ExplorerState(start: dir); await settle()
+        s.drop([URL(fileURLWithPath: dir.appending(path: "k.txt").path)], into: dir)
+        await settle()
+        XCTAssertTrue(fm.fileExists(atPath: dir.appending(path: "k.txt").path))
+        XCTAssertFalse(fm.fileExists(atPath: dir.appending(path: "k - Copy.txt").path))
+    }
+
     func testCannotMoveFolderIntoItself() async throws {
         let sub = dir.appending(path: "sub").normalized
         try fm.createDirectory(at: sub, withIntermediateDirectories: false)

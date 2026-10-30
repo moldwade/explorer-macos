@@ -36,5 +36,7 @@ cat > "$APP/Contents/Info.plist" <<PL
 </dict></array>
 </dict></plist>
 PL
-codesign --force --sign - "$APP"
+# A plain ad-hoc signature is identified by its hash, so macOS treats every rebuild as a new app and
+# asks for folder access again. Pin the identity to the bundle id so granted permissions survive rebuilds.
+codesign --force --sign - -r='designated => identifier "com.local.explorer"' "$APP"
 echo "Built $APP"

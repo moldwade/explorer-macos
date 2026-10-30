@@ -55,13 +55,15 @@ final class SharedClipboard {
 @MainActor @Observable
 final class ExplorerState {
     var current: URL
-    var items: [FileItem] = []
+    var items: [FileItem] = [] { didSet { listVersion &+= 1 } }
     var selection: Set<URL> = []
     var sortOrder: [KeyPathComparator<FileItem>] = [ExplorerState.nameSort]
     var showHidden = false
     var viewMode: ViewMode = .details
     var searchText = ""
-    var searchResults: [FileItem] = []
+    var searchResults: [FileItem] = [] { didSet { listVersion &+= 1 } }
+    /// Bumped whenever `items` or `searchResults` change; part of the sorted-list cache key.
+    private var listVersion = 0
     var isSearching = false
     var back: [URL] = []
     var forward: [URL] = []
@@ -89,6 +91,8 @@ final class ExplorerState {
     var kindW: CGFloat = 140
     var sizeW: CGFloat = 90
     var anchor: URL?
+    /// The moving end of the selection (keyboard focus); the list scrolls to keep it visible.
+    var cursor: URL?
     var transferJob: TransferJob?
     var marquee: CGRect?
     var volumesVersion = 0
@@ -131,6 +135,32 @@ final class ExplorerState {
 
     // MARK: Derived
 
+    private struct ListKey: Equatable {
+        let version: Int, searching: Bool, hidden: Bool, sort: [KeyPathComparator<FileItem>], group: GroupKey
+    }
+    private struct ListCache {
+        let key: ListKey
+        let groups: [(title: String, items: [FileItem])]
+        let displayed: [FileItem]
+        let index: [URL: Int]
+    }
+    @ObservationIgnored private var listCache: ListCache?
+
+    /// Sorting thousands of names is slow, and selection code asks for the list on every click and
+    /// key press, so the sorted/grouped result is kept until one of its inputs changes.
+    private var list: ListCache {
+        // Reading the inputs here also registers them for observation on a cache hit.
+        let key = ListKey(version: listVersion, searching: !searchText.isEmpty, hidden: showHidden,
+                          sort: sortOrder, group: group)
+        if let c = listCache, c.key == key { return c }
+        let groups = makeGroups(sortedVisible)
+        let displayed = group == .none ? groups.first?.items ?? [] : groups.flatMap(\.items)
+        let c = ListCache(key: key, groups: groups, displayed: displayed,
+                          index: Dictionary(displayed.enumerated().map { ($1.url, $0) }, uniquingKeysWith: { a, _ in a }))
+        listCache = c
+        return c
+    }
+
     private var sortedVisible: [FileItem] {
         let base = searchText.isEmpty ? items : searchResults
         let visible = showHidden ? base : base.filter { !$0.isHidden }
@@ -138,8 +168,9 @@ final class ExplorerState {
         return sorted.filter(\.isFolder) + sorted.filter { !$0.isFolder }
     }
 
-    var groups: [(title: String, items: [FileItem])] {
-        let list = sortedVisible
+    var groups: [(title: String, items: [FileItem])] { list.groups }
+
+    private func makeGroups(_ list: [FileItem]) -> [(title: String, items: [FileItem])] {
         guard group != .none else { return [("", list)] }
         var buckets: [String: [FileItem]] = [:]
         var rank: [String: Int] = [:]
@@ -183,13 +214,14 @@ final class ExplorerState {
         }
     }
 
-    var displayed: [FileItem] { group == .none ? sortedVisible : groups.flatMap(\.items) }
+    var displayed: [FileItem] { list.displayed }
+    func displayIndex(of url: URL) -> Int? { list.index[url] }
 
     // MARK: Selection
 
     func click(_ item: FileItem, shift: Bool, toggle: Bool) {
         let list = displayed
-        if shift, let a = anchor, let i0 = list.firstIndex(where: { $0.url == a }), let i1 = list.firstIndex(where: { $0.id == item.id }) {
+        if shift, let a = anchor, let i0 = displayIndex(of: a), let i1 = displayIndex(of: item.url) {
             let r = list[min(i0, i1)...max(i0, i1)].map(\.url)
             selection = toggle ? selection.union(r) : Set(r)
         } else if toggle {
@@ -199,13 +231,17 @@ final class ExplorerState {
             selection = [item.url]
             anchor = item.url
         }
+        cursor = item.url
     }
 
+    /// Arrow keys: move from the moving end of the selection; with Shift, grow or shrink the range
+    /// from the anchor (Windows behaviour).
     func moveSelection(_ delta: Int, extend: Bool) {
         let list = displayed
         guard !list.isEmpty else { return }
-        let cur = list.lastIndex { selection.contains($0.url) }
-        let idx = cur.map { max(0, min(list.count - 1, $0 + delta)) } ?? (delta > 0 ? 0 : list.count - 1)
+        let from = cursor.flatMap { selection.contains($0) ? displayIndex(of: $0) : nil }
+            ?? list.lastIndex { selection.contains($0.url) }
+        let idx = from.map { max(0, min(list.count - 1, $0 + delta)) } ?? (delta > 0 ? 0 : list.count - 1)
         click(list[idx], shift: extend, toggle: false)
     }
 
@@ -218,7 +254,7 @@ final class ExplorerState {
         typeTime = Date()
         typeBuffer += chars.lowercased()
         if let m = displayed.first(where: { $0.name.lowercased().hasPrefix(typeBuffer) }) {
-            selection = [m.url]; anchor = m.url
+            selection = [m.url]; anchor = m.url; cursor = m.url
         }
     }
 
@@ -259,7 +295,9 @@ final class ExplorerState {
         UserDefaults.standard.set(pinned.map(\.path), forKey: "pinned")
     }
 
-    var selectedItems: [FileItem] { displayed.filter { selection.contains($0.url) } }
+    var selectedItems: [FileItem] {
+        selection.compactMap { displayIndex(of: $0) }.sorted().map { displayed[$0] }
+    }
     var title: String { FileManager.default.displayName(atPath: current.path) }
     var canGoUp: Bool { current.path != "/" }
     var hasClipboard: Bool { !clipboard.isEmpty || !pasteboardURLs().isEmpty }
@@ -314,6 +352,7 @@ final class ExplorerState {
         let child = current
         go(to: current.deletingLastPathComponent())
         selection = [child.normalized]
+        anchor = child.normalized; cursor = child.normalized
     }
 
     func goToPath(_ text: String) {
@@ -344,7 +383,9 @@ final class ExplorerState {
                 switch result {
                 case .success(let list):
                     self.items = list
-                    self.selection = self.selection.filter { s in list.contains { $0.url == s } }
+                    // Keep selected search results too: they live outside the current folder.
+                    let present = Set(list.map(\.url)).union(self.searchResults.map(\.url))
+                    self.selection = self.selection.filter(present.contains)
                 case .failure(let e):
                     self.items = []
                     self.errorMessage = e.localizedDescription
@@ -471,7 +512,9 @@ final class ExplorerState {
         var plan: [(src: URL, dest: URL)] = []
         var taken = Self.inFlight
         for src in sources {
-            if move && src.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL { continue }
+            // Compare normalized paths: a dropped URL's parent ends in "/" and wouldn't equal `dir`, which
+            // turned "move into the folder it is already in" into a rename to "name - Copy".
+            if move && src.deletingLastPathComponent().normalized == dir.normalized { continue }
             if dir.standardizedFileURL.path.hasPrefix(src.standardizedFileURL.path + "/") || dir.standardizedFileURL == src.standardizedFileURL {
                 errorMessage = "Can't put “\(src.lastPathComponent)” inside itself."
                 continue
@@ -612,7 +655,7 @@ final class ExplorerState {
     func updateMarquee(_ rect: CGRect, additive: Bool) {
         if marquee == nil { marqueeBase = additive ? selection : [] }
         marquee = rect
-        let hit = rowFrames.filter { $0.value.intersects(rect) }.map(\.key)
+        let hit = rowFrames.filter { $0.value.intersects(rect) && displayIndex(of: $0.key) != nil }.map(\.key)
         selection = (marqueeBase ?? []).union(hit)
         if let last = hit.first { anchor = last }
     }

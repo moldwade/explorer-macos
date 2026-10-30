@@ -13,7 +13,8 @@ struct ListKeys: ViewModifier {
             .focusable()
             .focused($focused)
             .focusEffectDisabled()
-            .simultaneousGesture(TapGesture().onEnded { focused = true })
+            // Not while renaming: taking focus back would end the rename the moment you click in the field.
+            .simultaneousGesture(TapGesture().onEnded { if state.renameTarget == nil { focused = true } })
             .onAppear { focused = true }
             .onChange(of: state.current) { focused = true }
             .onChange(of: state.renameTarget) { if state.renameTarget == nil { focused = true } }
@@ -84,6 +85,85 @@ struct RowTracking: ViewModifier {
         content
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("content")) } action: { state.rowFrames[url] = $0 }
             .onHover { h in hover = h; state.noteHover(url, h) }
+            .onDisappear { state.rowFrames[url] = nil }  // off-screen rows must not be hit by the drag box
+    }
+}
+
+/// Click, double-click and drag for a file row. Turned off while the row is being renamed, so clicks
+/// and drags inside the name field edit the text instead of selecting, opening or dragging the file.
+struct RowGestures: ViewModifier {
+    let state: ExplorerState
+    let item: FileItem
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .onTapGesture {
+                    let m = clickModifiers()
+                    state.click(item, shift: m.shift, toggle: m.toggle)
+                }
+                .simultaneousGesture(TapGesture(count: 2).onEnded { state.open([item.url]) })
+                .gesture(DragGesture(minimumDistance: 4).onChanged { _ in
+                    guard !FileDrag.active else { return }
+                    if !state.selection.contains(item.url) { state.click(item, shift: false, toggle: false) }
+                    FileDrag.begin(state.selectedItems.map(\.url))
+                })
+        } else {
+            content
+        }
+    }
+}
+
+/// Dropping files onto a folder in the list puts them inside it (highlighted while hovering).
+struct FolderDropTarget: ViewModifier {
+    let state: ExplorerState
+    let item: FileItem
+    @State private var targeted = false
+
+    func body(content: Content) -> some View {
+        if item.isFolder {
+            content
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.accent, lineWidth: 1.5).opacity(targeted ? 1 : 0))
+                .dropDestination(for: URL.self) { urls, _ in
+                    let others = urls.filter { $0.normalized != item.url }  // a folder dropped on itself: ignore
+                    guard !others.isEmpty else { return false }
+                    state.drop(others, into: item.url)
+                    return true
+                } isTargeted: { targeted = $0 }
+        } else {
+            content
+        }
+    }
+}
+
+/// Drags every selected file at once through AppKit (SwiftUI's `.draggable` carries a single item).
+@MainActor
+enum FileDrag {
+    static var active = false
+
+    private final class Source: NSObject, NSDraggingSource {
+        func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            context == .outsideApplication ? [.copy, .link, .generic] : [.copy, .move, .generic]
+        }
+        func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+            MainActor.assumeIsolated { FileDrag.active = false }
+        }
+    }
+    private static let source = Source()
+
+    static func begin(_ urls: [URL]) {
+        guard !urls.isEmpty, let event = NSApp.currentEvent, let view = event.window?.contentView else { return }
+        let p = view.convert(event.locationInWindow, from: nil)
+        let items = urls.enumerated().map { i, u in
+            let item = NSDraggingItem(pasteboardWriter: u as NSURL)
+            let offset = CGFloat(min(i, 4) * 4)
+            item.setDraggingFrame(NSRect(x: p.x - 16 + offset, y: p.y - 16 - offset, width: 32, height: 32),
+                                  contents: i < 5 ? NSWorkspace.shared.icon(forFile: u.path) : nil)
+            return item
+        }
+        active = true
+        view.beginDraggingSession(with: items, event: event, source: source)
     }
 }
 
@@ -161,7 +241,7 @@ struct DetailsList: View {
                     .frame(maxWidth: .infinity, minHeight: viewportH, alignment: .top)
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportH = $0 }
-                .onChange(of: state.anchor) { if let a = state.anchor, state.marquee == nil { proxy.scrollTo(a) } }
+                .onChange(of: state.cursor) { if let a = state.cursor, state.marquee == nil { proxy.scrollTo(a) } }
             }
             .contextMenu { FileContextMenu(state: state, sel: []) }
         }
@@ -258,12 +338,8 @@ private struct DetailRow: View {
             .padding(.horizontal, 4))
         .contentShape(Rectangle())
         .modifier(RowTracking(state: state, url: item.url, hover: $hover))
-        .onTapGesture {
-            let m = clickModifiers()
-            state.click(item, shift: m.shift, toggle: m.toggle)
-        }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { state.open([item.url]) })
-        .draggable(item.url)
+        .modifier(RowGestures(state: state, item: item, enabled: !renaming))
+        .modifier(FolderDropTarget(state: state, item: item))
         .contextMenu { FileContextMenu(state: state, sel: selected ? state.selection : [item.url]) }
     }
 }
@@ -306,7 +382,7 @@ struct IconsGrid: View {
                 .frame(maxWidth: .infinity, minHeight: viewportH, alignment: .top)
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportH = $0 }
-            .onChange(of: state.anchor) { if let a = state.anchor, state.marquee == nil { proxy.scrollTo(a) } }
+            .onChange(of: state.cursor) { if let a = state.cursor, state.marquee == nil { proxy.scrollTo(a) } }
         }
         .background(GeometryReader { g in Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { width = g.size.width } })
         .background(Theme.background)
@@ -348,12 +424,8 @@ struct IconsGrid: View {
             .background(RoundedRectangle(cornerRadius: 4).fill(selected ? Theme.selection : (hover ? Theme.hover : .clear)))
             .contentShape(Rectangle())
             .modifier(RowTracking(state: state, url: item.url, hover: $hover))
-            .onTapGesture {
-                let m = clickModifiers()
-                state.click(item, shift: m.shift, toggle: m.toggle)
-            }
-            .simultaneousGesture(TapGesture(count: 2).onEnded { state.open([item.url]) })
-            .draggable(item.url)
+            .modifier(RowGestures(state: state, item: item, enabled: !renaming))
+            .modifier(FolderDropTarget(state: state, item: item))
             .contextMenu { FileContextMenu(state: state, sel: selected ? state.selection : [item.url]) }
         }
     }

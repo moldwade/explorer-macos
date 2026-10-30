@@ -87,7 +87,7 @@ struct ContentView: View {
             if let sel {
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(400))
-                    if let u = state.items.first(where: { $0.name == sel })?.url { state.selection = [u]; state.anchor = u }
+                    if let u = state.items.first(where: { $0.name == sel })?.url { state.selection = [u]; state.anchor = u; state.cursor = u }
                 }
             }
         }
