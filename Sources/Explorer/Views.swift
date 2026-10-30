@@ -11,6 +11,7 @@ struct WindowSpec: Codable, Hashable {
 
 struct ContentView: View {
     @State private var state: ExplorerState
+    @Environment(\.openWindow) private var openWindow
 
     init(start: URL) {
         let s = ExplorerState(start: start)
@@ -57,6 +58,12 @@ struct ContentView: View {
         .onChange(of: state.searchText) { state.search() }
         .onChange(of: state.showHidden) { state.search() }
         .focusedSceneValue(\.explorer, state)
+        .onAppear {
+            state.openInNewTab = { [openWindow] url in
+                WindowTabs.pendingParent = NSApp.keyWindow
+                openWindow(value: WindowSpec(url: url))
+            }
+        }
         .quickLookPreview($state.quickLook, in: state.selectedItems.map(\.url))
         .sheet(isPresented: Binding(get: { state.propertiesTarget != nil }, set: { if !$0 { state.propertiesTarget = nil } })) {
             if let t = state.propertiesTarget { PropertiesView(state: state, urls: t) }

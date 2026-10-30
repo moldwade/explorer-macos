@@ -16,6 +16,7 @@ struct FileItem: Identifiable, Hashable {
     let size: Int64
     let modified: Date
     let kind: String
+    let tags: [FinderTag]
 
     /// A folder you can navigate into (packages such as .app open like files).
     var isFolder: Bool { isDirectory && !isPackage }
@@ -43,12 +44,57 @@ struct FileItem: Identifiable, Hashable {
         size = Int64(v.fileSize ?? 0)
         modified = v.contentModificationDate ?? .distantPast
         kind = v.localizedTypeDescription ?? (isDirectory ? "Folder" : "File")
+        tags = FinderTag.read(url)
     }
 
     static func list(_ dir: URL) throws -> [FileItem] {
         try FileManager.default
             .contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [])
             .compactMap { FileItem(url: $0) }
+    }
+}
+
+/// A macOS Finder tag. `color` is Finder's label index: 0 none, 1 gray, 2 green, 3 purple,
+/// 4 blue, 5 yellow, 6 red, 7 orange.
+struct FinderTag: Hashable {
+    let name: String
+    let color: Int
+
+    static let xattrName = "com.apple.metadata:_kMDItemUserTags"
+
+    /// Tags as Finder stores them: a binary-plist array of "name\ncolor" strings in an extended attribute.
+    static func read(_ url: URL) -> [FinderTag] {
+        let size = getxattr(url.path, xattrName, nil, 0, 0, 0)
+        guard size > 0 else { return [] }
+        var data = Data(count: size)
+        let got = data.withUnsafeMutableBytes { getxattr(url.path, xattrName, $0.baseAddress, size, 0, 0) }
+        guard got == size,
+              let list = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String]
+        else { return [] }
+        return list.map { entry in
+            let parts = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            return FinderTag(name: String(parts[0]), color: parts.count > 1 ? Int(parts[1]) ?? 0 : 0)
+        }
+    }
+
+    @discardableResult
+    static func write(_ tags: [FinderTag], to url: URL) -> Bool {
+        if tags.isEmpty { return removexattr(url.path, xattrName, 0) == 0 || errno == ENOATTR }
+        let list = tags.map { $0.color == 0 ? $0.name : "\($0.name)\n\($0.color)" }
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: list, format: .binary, options: 0)
+        else { return false }
+        return data.withUnsafeBytes { setxattr(url.path, xattrName, $0.baseAddress, data.count, 0, 0) } == 0
+    }
+
+    /// Finder's seven colour tags, with the names the system uses for them (localized).
+    static var standard: [FinderTag] {
+        let names = NSWorkspace.shared.fileLabels
+        return (1...7).compactMap { i in i < names.count ? FinderTag(name: names[i], color: i) : nil }
+    }
+
+    var nsColor: NSColor? {
+        let colors = NSWorkspace.shared.fileLabelColors
+        return color > 0 && color < colors.count ? colors[color] : nil
     }
 }
 

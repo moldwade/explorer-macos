@@ -32,7 +32,7 @@ struct ListKeys: ViewModifier {
                 case .return: if !state.selection.isEmpty { state.open(state.selection) }
                 case .space:
                     if let u = state.selection.first { state.quickLook = u } else { return .ignored }
-                case .escape: state.selectNone()
+                case .escape: state.selectNone(); state.cancelCut()
                 default:
                     guard !p.modifiers.contains(.control), !p.characters.isEmpty,
                           p.characters.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) })
@@ -113,6 +113,23 @@ struct MarqueeLayer: View {
     }
 }
 
+/// Finder-style overlapping colour dots for a file's tags.
+struct TagDots: View {
+    let tags: [FinderTag]
+
+    var body: some View {
+        let colors = tags.compactMap(\.nsColor).prefix(3)
+        if !colors.isEmpty {
+            HStack(spacing: -4) {
+                ForEach(Array(colors.enumerated()), id: \.offset) { _, c in
+                    Circle().fill(Color(nsColor: c)).frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Theme.background, lineWidth: 1))
+                }
+            }
+        }
+    }
+}
+
 func clickModifiers() -> (shift: Bool, toggle: Bool) {
     let f = NSEvent.modifierFlags
     return (f.contains(.shift), f.contains(.command) || f.contains(.control))
@@ -122,6 +139,7 @@ func clickModifiers() -> (shift: Bool, toggle: Bool) {
 
 struct DetailsList: View {
     let state: ExplorerState
+    @State private var viewportH: CGFloat = 300
 
     var body: some View {
         let groups = state.groups
@@ -139,8 +157,10 @@ struct DetailsList: View {
                         }
                     }
                     .coordinateSpace(name: "content")
-                    .frame(maxWidth: .infinity, minHeight: 300)
+                    // Fill the whole visible area so clicks/drags below the last row reach the marquee layer.
+                    .frame(maxWidth: .infinity, minHeight: viewportH, alignment: .top)
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportH = $0 }
                 .onChange(of: state.anchor) { if let a = state.anchor, state.marquee == nil { proxy.scrollTo(a) } }
             }
             .contextMenu { FileContextMenu(state: state, sel: []) }
@@ -218,7 +238,7 @@ private struct DetailRow: View {
             HStack(spacing: 8) {
                 ItemIcon(item: item, size: 18)
                 if renaming { RenameField(state: state) }
-                else { Text(item.name).lineLimit(1) }
+                else { Text(item.name).lineLimit(1); TagDots(tags: item.tags) }
             }
             .padding(.horizontal, 8).frame(width: state.nameW + 1, alignment: .leading)
             Text(item.modified.formatted(date: .numeric, time: .shortened))
@@ -230,7 +250,7 @@ private struct DetailRow: View {
             Spacer(minLength: 0)
         }
         .font(.system(size: 12.5))
-        .foregroundStyle(Color.primary.opacity(item.isHidden ? 0.55 : 1))
+        .foregroundStyle(Color.primary.opacity(item.isHidden || state.isCutPending(item.url) ? 0.55 : 1))
         .padding(.leading, 10)
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 4)
@@ -253,6 +273,7 @@ private struct DetailRow: View {
 struct IconsGrid: View {
     let state: ExplorerState
     @State private var width: CGFloat = 800
+    @State private var viewportH: CGFloat = 300
 
     private var mode: ViewMode { state.viewMode }
     private var horizontal: Bool { mode == .small || mode == .list }
@@ -282,8 +303,9 @@ struct IconsGrid: View {
                     .padding(.vertical, 8)
                 }
                 .coordinateSpace(name: "content")
-                .frame(maxWidth: .infinity, minHeight: 300)
+                .frame(maxWidth: .infinity, minHeight: viewportH, alignment: .top)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportH = $0 }
             .onChange(of: state.anchor) { if let a = state.anchor, state.marquee == nil { proxy.scrollTo(a) } }
         }
         .background(GeometryReader { g in Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { width = g.size.width } })
@@ -307,19 +329,22 @@ struct IconsGrid: View {
                 if horizontal {
                     HStack(spacing: 6) {
                         ItemIcon(item: item, size: 16)
-                        if renaming { RenameField(state: state) } else { Text(item.name).lineLimit(1) }
+                        if renaming { RenameField(state: state) } else { Text(item.name).lineLimit(1); TagDots(tags: item.tags) }
                         Spacer(minLength: 0)
                     }.padding(.horizontal, 6).frame(height: 24)
                 } else {
                     VStack(spacing: 4) {
                         ThumbIcon(item: item, size: mode.iconSize)
                         if renaming { RenameField(state: state, alignment: .center) }
-                        else { Text(item.name).lineLimit(2).multilineTextAlignment(.center) }
+                        else {
+                            Text(item.name).lineLimit(2).multilineTextAlignment(.center)
+                            TagDots(tags: item.tags)
+                        }
                     }.padding(6).frame(maxWidth: .infinity)
                 }
             }
             .font(.system(size: 12.5))
-            .opacity(item.isHidden ? 0.55 : 1)
+            .opacity(item.isHidden || state.isCutPending(item.url) ? 0.55 : 1)
             .background(RoundedRectangle(cornerRadius: 4).fill(selected ? Theme.selection : (hover ? Theme.hover : .clear)))
             .contentShape(Rectangle())
             .modifier(RowTracking(state: state, url: item.url, hover: $hover))

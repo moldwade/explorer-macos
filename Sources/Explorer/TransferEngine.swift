@@ -45,6 +45,8 @@ enum TransferEngine {
             guard let ctx else { return Int32(COPYFILE_CONTINUE) }
             let c = Unmanaged<ByteCounter>.fromOpaque(ctx).takeUnretainedValue()
             if c.isCancelled { return Int32(COPYFILE_QUIT) }
+            // Stop on any error: continuing would skip the file and still report the copy as complete.
+            if stage == COPYFILE_ERR { return Int32(COPYFILE_QUIT) }
             if what == COPYFILE_RECURSE_FILE && stage == COPYFILE_START { c.beginFile() }
             if what == COPYFILE_COPY_DATA && stage == COPYFILE_PROGRESS, let state {
                 var copied: off_t = 0

@@ -125,6 +125,7 @@ private struct SelectionMenu: View {
         }
         Button("Compress to ZIP file") { state.compress(sel) }
         Button("Copy as path") { state.copyPaths(sel) }
+        TagsMenu(state: state, sel: sel)
         Button("Properties") { state.propertiesTarget = Array(sel) }
         Divider()
 
@@ -177,5 +178,29 @@ private struct OpenWithMenu: View {
             Divider()
             Button("Choose another app…") { state.chooseAppAndOpen(sel) }
         }
+    }
+}
+
+/// Finder colour tags for the selection; a tick means every selected item has it.
+struct TagsMenu: View {
+    let state: ExplorerState
+    let sel: Set<URL>
+
+    var body: some View {
+        Menu("Tags") {
+            ForEach(FinderTag.standard, id: \.self) { tag in
+                Toggle(isOn: Binding(get: { state.hasTag(tag, sel) }, set: { _ in state.toggleTag(tag, sel) })) {
+                    Label { Text(tag.name) } icon: { Image(nsImage: swatch(tag.nsColor ?? .gray)) }
+                }
+            }
+        }
+    }
+
+    private func swatch(_ c: NSColor) -> NSImage {
+        let img = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in
+            c.setFill(); NSBezierPath(ovalIn: r.insetBy(dx: 1, dy: 1)).fill(); return true
+        }
+        img.isTemplate = false
+        return img
     }
 }

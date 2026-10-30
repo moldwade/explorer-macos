@@ -82,6 +82,49 @@ final class ExplorerTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: dir.appending(path: "m.txt").path))
     }
 
+    func testCutInOneTabPasteInAnotherMoves() async throws {
+        let sub = dir.appending(path: "sub").normalized
+        try fm.createDirectory(at: sub, withIntermediateDirectories: false)
+        try touch("t.txt")
+        let a = ExplorerState(start: dir), b = ExplorerState(start: sub); await settle()
+        a.cut([dir.appending(path: "t.txt")])
+        XCTAssertTrue(b.isCutPending(dir.appending(path: "t.txt")))
+        b.paste()
+        XCTAssertTrue(fm.fileExists(atPath: sub.appending(path: "t.txt").path))
+        XCTAssertFalse(fm.fileExists(atPath: dir.appending(path: "t.txt").path))
+    }
+
+    func testEscapeCancelsCut() async throws {
+        try touch("e.txt")
+        let s = ExplorerState(start: dir); await settle()
+        let u = dir.appending(path: "e.txt")
+        s.cut([u]); XCTAssertTrue(s.isCutPending(u))
+        s.cancelCut(); XCTAssertFalse(s.isCutPending(u))
+    }
+
+    func testCopyStopsOnUnreadableFile() throws {
+        let src = dir.appending(path: "src")
+        try fm.createDirectory(at: src, withIntermediateDirectories: false)
+        try "ok".write(to: src.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        let bad = src.appending(path: "b.txt")
+        try "secret".write(to: bad, atomically: true, encoding: .utf8)
+        chmod(bad.path, 0)
+        defer { chmod(bad.path, 0o644) }
+        XCTAssertThrowsError(try TransferEngine.copy(src, to: dir.appending(path: "dst"), counter: ByteCounter()))
+    }
+
+    func testUndoKeepsWhatFailed() async throws {
+        let sub = dir.appending(path: "sub").normalized
+        try fm.createDirectory(at: sub, withIntermediateDirectories: false)
+        try touch("x.txt"); try touch("y.txt")
+        let s = ExplorerState(start: dir); await settle()
+        s.transfer([dir.appending(path: "x.txt"), dir.appending(path: "y.txt")], into: sub, move: true)
+        try touch("x.txt") // blocks undoing x
+        s.undo()
+        XCTAssertTrue(fm.fileExists(atPath: dir.appending(path: "y.txt").path))
+        XCTAssertEqual(s.undoStack.count, 1)
+    }
+
     func testCannotMoveFolderIntoItself() async throws {
         let sub = dir.appending(path: "sub").normalized
         try fm.createDirectory(at: sub, withIntermediateDirectories: false)

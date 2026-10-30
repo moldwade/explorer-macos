@@ -28,22 +28,57 @@ enum WindowTabs {
             w.close()
         }
     }
+    /// The tab under `point` (window coordinates) in the native tab bar. AppKit draws one `NSTabButton`
+    /// per tab, left to right in `tabbedWindows` order.
+    static func tab(at point: NSPoint, in w: NSWindow) -> NSWindow? {
+        guard let tabs = w.tabbedWindows, tabs.count > 1 else { return nil }
+        var buttons: [NSView] = []
+        collect("NSTabButton", in: w.contentView?.superview, into: &buttons)
+        let frames = buttons.map { $0.convert($0.bounds, to: nil) }.sorted { $0.minX < $1.minX }
+        guard frames.count == tabs.count, let i = frames.firstIndex(where: { $0.contains(point) }) else { return nil }
+        return tabs[i]
+    }
+
+    private static func collect(_ cls: String, in v: NSView?, into out: inout [NSView]) {
+        guard let v else { return }
+        if String(describing: type(of: v)) == cls { out.append(v); return }
+        for s in v.subviews { collect(cls, in: s, into: &out) }
+    }
+
     static func configure(_ w: NSWindow) {
         w.tabbingIdentifier = "explorer"
         if let p = pendingParent, p !== w {
             pendingParent = nil
+            // If SwiftUI already put the window on screen, keep it invisible until it is inside the tab group.
+            let shown = w.isVisible
+            if shown { w.alphaValue = 0 }
             p.addTabbedWindow(w, ordered: .above)
             w.makeKeyAndOrderFront(nil)
+            if shown { DispatchQueue.main.async { w.alphaValue = 1 } }
         }
     }
 }
 
 struct WindowAccessor: NSViewRepresentable {
     let state: ExplorerState
-    func makeNSView(context: Context) -> NSView {
-        let v = NSView()
-        DispatchQueue.main.async { if let w = v.window { WindowTabs.configure(w); WindowTabs.register(state, w); state.installRightClickMonitor(for: w) } }
-        return v
+    func makeNSView(context: Context) -> NSView { HostView(state: state) }
+
+    /// Configures the window the moment the view is attached to it — before it is first shown —
+    /// so a new tab joins its tab group without flashing up as a separate window first.
+    final class HostView: NSView {
+        let state: ExplorerState
+        private var done = false
+        init(state: ExplorerState) { self.state = state; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !done, let w = window else { return }
+            done = true
+            WindowTabs.configure(w)
+            WindowTabs.register(state, w)
+            state.installRightClickMonitor(for: w)
+        }
     }
     func updateNSView(_ nsView: NSView, context: Context) {}
 }

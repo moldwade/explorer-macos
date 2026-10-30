@@ -78,10 +78,11 @@ extension ExplorerState {
         let dest = Self.uniqueURL(in: destDir, name: name + ".zip", suffix: " (1)")
         let parent = first.deletingLastPathComponent()
         let sameParent = list.allSatisfy { $0.deletingLastPathComponent() == parent }
-        let args = ["-r", "-q", dest.path] + (sameParent ? list.map(\.lastPathComponent) : list.map(\.path))
+        // "./" keeps names starting with "-" from being read as options; -y stores symlinks instead of following them.
+        let args = ["-r", "-q", "-y", dest.path] + (sameParent ? list.map { "./" + $0.lastPathComponent } : list.map(\.path))
         run("/usr/bin/zip", args, cwd: sameParent ? parent : nil) { ok in
             if ok { self.record(.create([dest.normalized])); self.reload(); self.selection = [dest.normalized] }
-            else { self.errorMessage = "Couldn't compress the selection." }
+            else { try? FileManager.default.removeItem(at: dest); self.errorMessage = "Couldn't compress the selection." }
         }
     }
 
@@ -193,5 +194,22 @@ extension ExplorerState {
 
     func printFiles(_ urls: Set<URL>) {
         run("/usr/bin/lpr", urls.map(\.path)) { ok in if !ok { self.errorMessage = "Couldn't print (no default printer?)." } }
+    }
+
+    // MARK: Finder tags
+
+    func hasTag(_ tag: FinderTag, _ urls: Set<URL>) -> Bool {
+        !urls.isEmpty && urls.allSatisfy { u in FinderTag.read(u).contains { $0.name == tag.name } }
+    }
+
+    /// Adds the tag to every item, or removes it when all of them already have it (like Finder).
+    func toggleTag(_ tag: FinderTag, _ urls: Set<URL>) {
+        let remove = hasTag(tag, urls)
+        for u in urls {
+            var tags = FinderTag.read(u).filter { $0.name != tag.name }
+            if !remove { tags.append(tag) }
+            if !FinderTag.write(tags, to: u) { errorMessage = "Couldn't change the tags of “\(u.lastPathComponent)”." }
+        }
+        reload()
     }
 }

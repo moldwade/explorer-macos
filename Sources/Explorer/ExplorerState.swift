@@ -43,6 +43,15 @@ enum UndoOp {
     }
 }
 
+/// One clipboard for the whole app, so Cut in one tab or window and Paste in another still moves.
+@MainActor @Observable
+final class SharedClipboard {
+    static let shared = SharedClipboard()
+    var urls: [URL] = []
+    var isCut = false
+    var changeCount = -1
+}
+
 @MainActor @Observable
 final class ExplorerState {
     var current: URL
@@ -62,8 +71,14 @@ final class ExplorerState {
     var renameText = ""
     var errorMessage: String?
     var quickLook: URL?
-    var clipboard: [URL] = []
-    var clipboardIsCut = false
+    var clipboard: [URL] {
+        get { SharedClipboard.shared.urls }
+        set { SharedClipboard.shared.urls = newValue }
+    }
+    var clipboardIsCut: Bool {
+        get { SharedClipboard.shared.isCut }
+        set { SharedClipboard.shared.isCut = newValue }
+    }
     var group: GroupKey = .none
     var showDetailsPane = false
     var propertiesTarget: [URL]?
@@ -78,6 +93,8 @@ final class ExplorerState {
     var marquee: CGRect?
     var volumesVersion = 0
     @ObservationIgnored var hoverURL: URL?
+    /// Opens a folder in a new tab of this window; set by the view, which owns `openWindow`.
+    @ObservationIgnored var openInNewTab: ((URL) -> Void)?
     @ObservationIgnored var rowFrames: [URL: CGRect] = [:]
     @ObservationIgnored private var marqueeBase: Set<URL>?
     @ObservationIgnored private var rightClickMonitor: Any?
@@ -85,7 +102,10 @@ final class ExplorerState {
     @ObservationIgnored private var typeBuffer = ""
     @ObservationIgnored private var typeTime = Date.distantPast
 
-    @ObservationIgnored private var clipboardChange = -1
+    private var clipboardChange: Int {
+        get { SharedClipboard.shared.changeCount }
+        set { SharedClipboard.shared.changeCount = newValue }
+    }
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var source: DispatchSourceFileSystemObject?
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -207,17 +227,28 @@ final class ExplorerState {
     func record(_ op: UndoOp) { undoStack.append(op); if undoStack.count > 50 { undoStack.removeFirst() } }
     var undoLabel: String? { undoStack.last.map { "Undo \($0.label)" } }
 
+    /// Undoes as much of the last operation as it can; whatever fails stays on the stack to retry.
     func undo() {
         guard let op = undoStack.popLast() else { return }
         let fm = FileManager.default
-        do {
-            switch op {
-            case .rename(let f, let t): try fm.moveItem(at: t, to: f)
-            case .move(let pairs): for p in pairs { try fm.moveItem(at: p.to, to: p.from) }
-            case .create(let urls): for u in urls { try fm.trashItem(at: u, resultingItemURL: nil) }
-            case .trash(let pairs): for p in pairs { try fm.moveItem(at: p.trashed, to: p.orig) }
-            }
-        } catch { errorMessage = error.localizedDescription }
+        var firstError: Error?
+        func attempt(_ body: () throws -> Void) -> Bool {
+            do { try body(); return true } catch { if firstError == nil { firstError = error }; return false }
+        }
+        switch op {
+        case .rename(let f, let t):
+            if !attempt({ try fm.moveItem(at: t, to: f) }) { undoStack.append(op) }
+        case .move(let pairs):
+            let left = pairs.filter { p in !attempt { try fm.moveItem(at: p.to, to: p.from) } }
+            if !left.isEmpty { undoStack.append(.move(left)) }
+        case .create(let urls):
+            let left = urls.filter { u in !attempt { try fm.trashItem(at: u, resultingItemURL: nil) } }
+            if !left.isEmpty { undoStack.append(.create(left)) }
+        case .trash(let pairs):
+            let left = pairs.filter { p in !attempt { try fm.moveItem(at: p.trashed, to: p.orig) } }
+            if !left.isEmpty { undoStack.append(.trash(left)) }
+        }
+        if let firstError { errorMessage = firstError.localizedDescription }
         reload()
     }
 
@@ -387,6 +418,14 @@ final class ExplorerState {
     func copy(_ urls: Set<URL>? = nil) { stash(urls ?? selection, cut: false) }
     func cut(_ urls: Set<URL>? = nil) { stash(urls ?? selection, cut: true) }
 
+    /// True while `url` is marked by Cut and still waiting to be pasted (drawn dimmed, like Windows).
+    func isCutPending(_ url: URL) -> Bool {
+        clipboardIsCut && NSPasteboard.general.changeCount == clipboardChange && clipboard.contains(url)
+    }
+
+    /// Esc drops a pending Cut, as in Windows: the items stay on the clipboard, but Paste now copies.
+    func cancelCut() { clipboardIsCut = false }
+
     func paste() {
         let pb = NSPasteboard.general
         let internal_ = pb.changeCount == clipboardChange
@@ -430,7 +469,7 @@ final class ExplorerState {
     @discardableResult
     func transfer(_ sources: [URL], into dir: URL, move: Bool) -> [URL] {
         var plan: [(src: URL, dest: URL)] = []
-        var taken = Set<String>()
+        var taken = Self.inFlight
         for src in sources {
             if move && src.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL { continue }
             if dir.standardizedFileURL.path.hasPrefix(src.standardizedFileURL.path + "/") || dir.standardizedFileURL == src.standardizedFileURL {
@@ -460,9 +499,13 @@ final class ExplorerState {
         return plan.map { $0.dest.normalized }
     }
 
+    /// Destinations of copies still running in any window, so a second paste can't pick the same name.
+    static var inFlight = Set<String>()
+
     private func runTransfer(_ plan: [(src: URL, dest: URL)], move: Bool, dir: URL) {
         let job = TransferJob(title: move ? "Moving" : "Copying", count: plan.count)
         transferJob = job
+        Self.inFlight.formUnion(plan.map(\.dest.path))
         let counter = job.counter
         Task.detached { [plan] in
             counter.setTotal(TransferEngine.totalBytes(plan.map(\.src)))
@@ -471,21 +514,33 @@ final class ExplorerState {
             for p in plan {
                 if counter.isCancelled { break }
                 counter.beginItem(p.src.lastPathComponent)
+                // Never touch something that is already at the destination: it isn't ours to remove.
+                if FileManager.default.fileExists(atPath: p.dest.path) {
+                    failure = "“\(p.dest.lastPathComponent)” already exists."
+                    break
+                }
                 do {
                     try TransferEngine.copy(p.src, to: p.dest, counter: counter)
-                    if move { try FileManager.default.removeItem(at: p.src) }
-                    done.append((p.src.normalized, p.dest.normalized))
                 } catch {
-                    try? FileManager.default.removeItem(at: p.dest)
+                    try? FileManager.default.removeItem(at: p.dest)  // only the incomplete copy we made
                     if !counter.isCancelled { failure = error.localizedDescription }
                     break
                 }
+                if move {
+                    // The copy is complete; from here on it is the only safe version, so keep it whatever happens.
+                    do { try FileManager.default.removeItem(at: p.src) } catch {
+                        failure = "Copied “\(p.src.lastPathComponent)”, but couldn't remove the original: \(error.localizedDescription)"
+                        break
+                    }
+                }
+                done.append((p.src.normalized, p.dest.normalized))
             }
             let finalDone = done, finalFailure = failure
             await MainActor.run {
+                Self.inFlight.subtract(plan.map(\.dest.path))
                 if let finalFailure { self.errorMessage = finalFailure }
                 self.finishTransfer(done: finalDone, move: move, dir: dir)
-                self.transferJob = nil
+                if self.transferJob === job { self.transferJob = nil }
             }
         }
         Task { @MainActor [weak self, weak job] in
@@ -527,11 +582,30 @@ final class ExplorerState {
 
     func installRightClickMonitor(for window: NSWindow) {
         guard rightClickMonitor == nil else { return }
-        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak self, weak window] e in
-            guard e.window === window, e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown, .otherMouseDown]) { [weak self, weak window] e in
+            guard let window, e.window === window else { return e }
+            if e.type == .otherMouseDown {
+                guard e.buttonNumber == 2 else { return e }
+                let handled = MainActor.assumeIsolated { self?.middleClick(e, in: window) ?? false }
+                return handled ? nil : e
+            }
+            guard e.type == .rightMouseDown || e.modifierFlags.contains(.control) else { return e }
             MainActor.assumeIsolated { self?.prepareContextMenu(for: self?.hoverURL) }
             return e
         }
+    }
+
+    /// Middle click, as in Windows: on a tab closes it, on a folder opens it in a new tab.
+    private func middleClick(_ e: NSEvent, in window: NSWindow) -> Bool {
+        if let tab = WindowTabs.tab(at: e.locationInWindow, in: window) {
+            tab.performClose(nil)
+            return true
+        }
+        if let u = hoverURL, let item = item(for: u), item.isFolder, let open = openInNewTab {
+            open(u)
+            return true
+        }
+        return false
     }
 
     /// Drag-box (rubber-band) selection; `rect` is in the scroll content's coordinate space.
