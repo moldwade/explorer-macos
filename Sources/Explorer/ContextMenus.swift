@@ -133,6 +133,7 @@ private struct SelectionMenu: View {
             if state.isArchive(s.url) { Button("Extract All…") { state.extract(s.url) } }
             if s.isAlias, let t = s.aliasTarget { Button("Open file location (original)") { state.revealInList(t) } }
         }
+        DocumentToolsMenu(state: state, sel: sel)
         Button("Compress to ZIP file") { state.compress(sel) }
         Button("Copy as path") { state.copyPaths(sel) }
         Button(sel.allSatisfy(state.isFavorite) ? "Remove from Favorites" : "Add to Favorites") { state.toggleFavorite(sel) }
@@ -214,5 +215,32 @@ struct TagsMenu: View {
         }
         img.isTemplate = false
         return img
+    }
+}
+
+/// PDF and image tools, shown only when every selected item is a PDF or every one is an image.
+struct DocumentToolsMenu: View {
+    let state: ExplorerState
+    let sel: Set<URL>
+
+    var body: some View {
+        if !sel.isEmpty, sel.allSatisfy(state.isPDF) {
+            Menu("PDF") {
+                if sel.count > 1 { Button("Merge into one PDF") { state.mergePDFs(sel) } }
+                if sel.count == 1, let u = sel.first { Button("Split into pages") { state.splitPDF(u) } }
+                Button("Rotate right") { state.rotatePDFs(sel, degrees: 90) }
+                Button("Rotate left") { state.rotatePDFs(sel, degrees: -90) }
+            }
+        } else if !sel.isEmpty, sel.allSatisfy(state.isImage) {
+            Menu("Image") {
+                Button("Resize for email") { state.resizeForEmail(sel) }
+                Button("Convert to JPEG") { state.convertImages(sel, to: "jpeg") }
+                Button("Convert to PNG") { state.convertImages(sel, to: "png") }
+                Button(sel.count == 1 ? "Make PDF" : "Combine into one PDF") { state.imagesToPDF(sel) }
+                Divider()
+                Button("Rotate right") { state.rotate(sel, degrees: 90) }
+                Button("Rotate left") { state.rotate(sel, degrees: 270) }
+            }
+        }
     }
 }
