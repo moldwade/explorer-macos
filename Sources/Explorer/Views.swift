@@ -125,11 +125,37 @@ struct SidebarView: View {
         return r
     }
 
+    static func tagURL(_ t: FinderTag) -> URL { URL(string: "explorer-tag://\(t.color)")! }
+
     var body: some View {
-        List(selection: Binding<URL?>(get: { state.current }, set: { if let u = $0 { state.go(to: u) } })) {
+        List(selection: Binding<URL?>(get: { state.tagFilter.map(Self.tagURL) ?? state.current }, set: { u in
+            guard let u else { return }
+            if u.scheme == "explorer-tag" {
+                if let tag = FinderTag.standard.first(where: { Self.tagURL($0) == u }) { state.showTag(tag) }
+            } else {
+                state.go(to: u)  // a favourite file opens in its app
+            }
+        })) {
             Section {
                 Label { Text("Home") } icon: { Image(systemName: "house.fill").foregroundStyle(Theme.accent) }
                     .tag(Self.home.normalized)
+            }
+            if !state.favorites.isEmpty {
+                Section("Favorites") {
+                    ForEach(state.favorites, id: \.self) { url in
+                        let exists = FileManager.default.fileExists(atPath: url.path)
+                        Label { Text(url.lastPathComponent) } icon: {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 16, height: 16)
+                        }
+                        .opacity(exists ? 1 : 0.45)
+                        .help(url.path)
+                        .tag(url)
+                        .contextMenu {
+                            Button("Open file location") { state.revealInList(url) }
+                            Button("Remove from Favorites") { state.toggleFavorite([url]) }
+                        }
+                    }
+                }
             }
             Section("Quick access") {
                 ForEach(defaults, id: \.url) { q in
@@ -142,6 +168,14 @@ struct SidebarView: View {
                         .tag(url)
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: url); return true }
                         .contextMenu { Button("Unpin from Quick access") { state.togglePin(url) } }
+                }
+            }
+            Section("Tags") {
+                ForEach(FinderTag.standard, id: \.self) { tag in
+                    Label { Text(tag.name) } icon: {
+                        Circle().fill(Color(nsColor: tag.nsColor ?? .gray)).frame(width: 10, height: 10)
+                    }
+                    .tag(Self.tagURL(tag))
                 }
             }
             Section("Network") {

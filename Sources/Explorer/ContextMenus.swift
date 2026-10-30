@@ -125,7 +125,9 @@ private struct SelectionMenu: View {
         }
         Button("Compress to ZIP file") { state.compress(sel) }
         Button("Copy as path") { state.copyPaths(sel) }
+        Button(sel.allSatisfy(state.isFavorite) ? "Remove from Favorites" : "Add to Favorites") { state.toggleFavorite(sel) }
         TagsMenu(state: state, sel: sel)
+        if state.tagFilter != nil, let s = single { Button("Open file location") { state.revealInList(s.url) } }
         Button("Properties") { state.propertiesTarget = Array(sel) }
         Divider()
 

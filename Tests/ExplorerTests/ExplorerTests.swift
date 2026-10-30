@@ -142,6 +142,21 @@ final class ExplorerTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: dir.appending(path: "k - Copy.txt").path))
     }
 
+    func testDateGroupsSortByFullTime() async throws {
+        let now = Date()
+        for (n, minsAgo) in [("a.txt", 30), ("b.txt", 5), ("c.txt", 60)] {
+            try touch(n)
+            try fm.setAttributes([.modificationDate: now.addingTimeInterval(Double(-minsAgo * 60))],
+                                 ofItemAtPath: dir.appending(path: n).path)
+        }
+        let s = ExplorerState(start: dir); await settle()
+        s.group = .modified
+        guard Calendar.current.component(.hour, from: now) >= 1 else { return }  // all three must be "Today"
+        XCTAssertEqual(s.displayed.map(\.name), ["b.txt", "a.txt", "c.txt"])
+        s.applySort(\FileItem.modified, ascending: true)
+        XCTAssertEqual(s.displayed.map(\.name), ["c.txt", "a.txt", "b.txt"])
+    }
+
     func testCannotMoveFolderIntoItself() async throws {
         let sub = dir.appending(path: "sub").normalized
         try fm.createDirectory(at: sub, withIntermediateDirectories: false)

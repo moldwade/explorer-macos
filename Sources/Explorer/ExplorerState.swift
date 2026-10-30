@@ -85,6 +85,10 @@ final class ExplorerState {
     var showDetailsPane = false
     var propertiesTarget: [URL]?
     var pinned: [URL] = (UserDefaults.standard.stringArray(forKey: "pinned") ?? []).map { URL(filePath: $0) }
+    /// Files and folders the user marked as favourites (Windows 11 "Add to Favorites").
+    var favorites: [URL] = (UserDefaults.standard.stringArray(forKey: "favorites") ?? []).map { URL(filePath: $0) }
+    /// When set, the list shows every file on the Mac with this Finder tag instead of a folder.
+    var tagFilter: FinderTag?
     var undoStack: [UndoOp] = []
     var nameW: CGFloat = 320
     var dateW: CGFloat = 160
@@ -150,7 +154,7 @@ final class ExplorerState {
     /// key press, so the sorted/grouped result is kept until one of its inputs changes.
     private var list: ListCache {
         // Reading the inputs here also registers them for observation on a cache hit.
-        let key = ListKey(version: listVersion, searching: !searchText.isEmpty, hidden: showHidden,
+        let key = ListKey(version: listVersion, searching: !searchText.isEmpty || tagFilter != nil, hidden: showHidden,
                           sort: sortOrder, group: group)
         if let c = listCache, c.key == key { return c }
         let groups = makeGroups(sortedVisible)
@@ -162,7 +166,7 @@ final class ExplorerState {
     }
 
     private var sortedVisible: [FileItem] {
-        let base = searchText.isEmpty ? items : searchResults
+        let base = searchText.isEmpty && tagFilter == nil ? items : searchResults
         let visible = showHidden ? base : base.filter { !$0.isHidden }
         let sorted = visible.sorted(using: sortOrder)
         return sorted.filter(\.isFolder) + sorted.filter { !$0.isFolder }
@@ -178,6 +182,17 @@ final class ExplorerState {
             let (t, r) = groupInfo(i)
             buckets[t, default: []].append(i)
             rank[t] = r
+        }
+        if group == .modified {
+            // Grouped by date: order by the full date and time, newest first, or oldest first when the
+            // Date modified column is sorted ascending. Groups follow the same direction.
+            let newest = !(sortKey == \FileItem.modified && sortAscending)
+            let byTime: (FileItem, FileItem) -> Bool = { a, b in
+                a.modified != b.modified ? (a.modified > b.modified) == newest
+                    : a.name.localizedStandardCompare(b.name) == .orderedAscending
+            }
+            return buckets.keys.sorted { newest ? rank[$0]! < rank[$1]! : rank[$0]! > rank[$1]! }
+                .map { ($0, buckets[$0]!.sorted(by: byTime)) }
         }
         return buckets.keys.sorted { (rank[$0]!, $0) < (rank[$1]!, $1) }.map { ($0, buckets[$0]!) }
     }
@@ -288,6 +303,55 @@ final class ExplorerState {
         reload()
     }
 
+    /// Goes to the folder holding `url` and selects it (Windows "Open file location").
+    func revealInList(_ url: URL) {
+        let u = url.normalized
+        go(to: u.deletingLastPathComponent())
+        selection = [u]; anchor = u; cursor = u
+    }
+
+    func isFavorite(_ u: URL) -> Bool { favorites.contains(u.normalized) }
+    func toggleFavorite(_ urls: Set<URL>) {
+        let list = urls.map(\.normalized)
+        if list.allSatisfy(isFavorite) { favorites.removeAll { list.contains($0) } }
+        else { favorites += list.filter { !isFavorite($0) }.sorted { $0.path < $1.path } }
+        UserDefaults.standard.set(favorites.map(\.path), forKey: "favorites")
+    }
+
+    // MARK: Tags view
+
+    /// Lists every file carrying `tag`, found through Spotlight (the same index Finder's tag view uses).
+    func showTag(_ tag: FinderTag) {
+        searchTask?.cancel()
+        tagFilter = tag
+        searchText = ""
+        selection = []
+        searchResults = []
+        isSearching = true
+        let name = tag.name
+        searchTask = Task { [weak self] in
+            let found = await Task.detached { Self.filesTagged(name) }.value
+            if Task.isCancelled { return }
+            self?.searchResults = found
+            self?.isSearching = false
+        }
+    }
+
+    nonisolated static func filesTagged(_ name: String) -> [FileItem] {
+        let p = Process()
+        p.executableURL = URL(filePath: "/usr/bin/mdfind")
+        let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        p.arguments = ["kMDItemUserTags == \"\(escaped)\"c"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").prefix(5000)
+            .compactMap { FileItem(url: URL(filePath: String($0))) }
+    }
+
     func isPinned(_ u: URL) -> Bool { pinned.contains(u.normalized) }
     func togglePin(_ u: URL) {
         let n = u.normalized
@@ -298,7 +362,7 @@ final class ExplorerState {
     var selectedItems: [FileItem] {
         selection.compactMap { displayIndex(of: $0) }.sorted().map { displayed[$0] }
     }
-    var title: String { FileManager.default.displayName(atPath: current.path) }
+    var title: String { tagFilter?.name ?? FileManager.default.displayName(atPath: current.path) }
     var canGoUp: Bool { current.path != "/" }
     var hasClipboard: Bool { !clipboard.isEmpty || !pasteboardURLs().isEmpty }
 
@@ -322,10 +386,11 @@ final class ExplorerState {
             else { errorMessage = "Can't find “\(target.path)”." }
             return
         }
-        if target != current {
-            if push { back.append(current); forward.removeAll() }
+        if target != current || tagFilter != nil {
+            if push && target != current { back.append(current); forward.removeAll() }
             current = target
         }
+        tagFilter = nil
         searchText = ""
         searchResults = []
         selection = []
@@ -411,6 +476,7 @@ final class ExplorerState {
     // MARK: Search (recursive, like Explorer)
 
     func search() {
+        guard tagFilter == nil else { return }  // the tag view owns searchResults
         searchTask?.cancel()
         let q = searchText
         guard !q.isEmpty else { searchResults = []; isSearching = false; return }
@@ -738,7 +804,8 @@ final class ExplorerState {
     var sortAscending: Bool { sortOrder.first?.order != .reverse }
 
     func setSort(_ key: PartialKeyPath<FileItem>) {
-        applySort(key, ascending: sortKey == key ? !sortAscending : true)
+        // Like Windows, the first click on Date modified shows the newest first.
+        applySort(key, ascending: sortKey == key ? !sortAscending : key != \FileItem.modified)
     }
 
     func applySort(_ key: PartialKeyPath<FileItem>, ascending: Bool) {
