@@ -50,8 +50,14 @@ If you're a Windows person stuck on a Mac (or just tired of Finder), this is for
 - *Empty space:* View, Sort by, Group by, Refresh, Undo, Paste, Paste shortcut, Open in Terminal, Select all / Invert selection, New (Folder, Shortcut, Text, RTF, Markdown, HTML, ZIP), Properties
 
 **Behaviour**
-- Real **Cut & Paste** (move), "name - Copy" naming on conflicts, multi-level **Undo** (rename, move, copy, delete, create)
-- Drag & drop: same volume moves, different volume copies, ⌥ flips
+- Real **Cut & Paste** (move) across tabs and windows, cut items dimmed, multi-level **Undo** (rename, move, copy, delete, create)
+- **Replace / Skip / Keep both** when a name already exists (Replace sends the old item to the Trash)
+- Drag & drop of the whole selection, onto folders in the list too: same volume moves, different volume copies, ⌥ flips
+- **Recycle Bin** in the navigation pane with **Restore** for items deleted in Explorer
+- **Favorites** (files and folders) and **Tags** (Finder colours; click to list every tagged file) in the navigation pane
+- Search matches names (accent-insensitive) and, through Spotlight, **text inside documents**
+- Right-click **PDF tools** (merge, split, rotate) and **image tools** (resize for email, convert, combine into PDF)
+- Shortcuts (aliases) open their target folder; middle-click opens a folder in a new tab or closes a tab
 - Copy/move runs in the background with a **progress bar and Cancel**; APFS copies are instant clones
 - Live refresh when files change outside the app
 
