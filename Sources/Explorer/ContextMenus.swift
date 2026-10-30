@@ -74,6 +74,10 @@ private struct BackgroundMenu: View {
     let state: ExplorerState
 
     var body: some View {
+        if state.inTrash {
+            Button("Empty Recycle Bin…", role: .destructive) { state.emptyTrash() }
+            Divider()
+        }
         Menu("View") { ViewMenuItems(state: state) }
         Menu("Sort by") { SortMenuItems(state: state) }
         Menu("Group by") { GroupMenuItems(state: state) }
@@ -105,6 +109,10 @@ private struct SelectionMenu: View {
         let single = list.count == 1 ? list.first : nil
         let allFiles = list.allSatisfy { !$0.isFolder }
 
+        if state.inTrash {
+            Button("Restore") { state.restore(sel) }.disabled(!state.canRestore(sel))
+            Divider()
+        }
         // Windows 11 icon row: Cut · Copy · Rename · Share · Delete
         Button { state.cut(sel) } label: { Label("Cut", systemImage: "scissors") }
         Button { state.copy(sel) } label: { Label("Copy", systemImage: "doc.on.doc") }
@@ -123,6 +131,7 @@ private struct SelectionMenu: View {
                 OpenWithMenu(state: state, sel: sel, item: s)
             }
             if state.isArchive(s.url) { Button("Extract All…") { state.extract(s.url) } }
+            if s.isAlias, let t = s.aliasTarget { Button("Open file location (original)") { state.revealInList(t) } }
         }
         Button("Compress to ZIP file") { state.compress(sel) }
         Button("Copy as path") { state.copyPaths(sel) }

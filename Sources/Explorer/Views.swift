@@ -142,6 +142,10 @@ struct SidebarView: View {
             Section {
                 Label { Text("Home") } icon: { Image(systemName: "house.fill").foregroundStyle(Theme.accent) }
                     .tag(Self.home.normalized)
+                Label { Text("Recycle Bin") } icon: { Image(systemName: "trash.fill").foregroundStyle(.secondary) }
+                    .tag(ExplorerState.trashURL)
+                    .dropDestination(for: URL.self) { urls, _ in state.trash(Set(urls)); return true }
+                    .contextMenu { Button("Empty Recycle Bin…") { state.emptyTrash() } }
             }
             if !state.favorites.isEmpty {
                 Section("Favorites") {

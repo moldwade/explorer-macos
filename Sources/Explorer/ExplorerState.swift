@@ -387,7 +387,12 @@ final class ExplorerState {
     // MARK: Navigation
 
     func go(to url: URL, push: Bool = true) {
-        let target = url.normalized
+        var target = url.normalized
+        // A shortcut (alias) to a folder opens the folder, as in Windows.
+        if (try? target.resourceValues(forKeys: [.isAliasFileKey]))?.isAliasFile == true,
+           let resolved = try? URL(resolvingAliasFileAt: target, options: [.withoutUI, .withoutMounting]) {
+            target = resolved.normalized
+        }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir), isDir.boolValue else {
             if FileManager.default.fileExists(atPath: target.path) { NSWorkspace.shared.open(target) }
@@ -439,7 +444,12 @@ final class ExplorerState {
         pendingRename = nil
         for u in urls {
             if let item = items.first(where: { $0.url == u }) ?? FileItem(url: u) {
-                item.isFolder ? go(to: u) : { NSWorkspace.shared.open(u) }()
+                if item.isAlias, !item.isFolder {
+                    guard let t = item.aliasTarget else { errorMessage = "The item “\(item.name)” points to can't be found."; continue }
+                    go(to: t)  // folders open here, files in their app
+                } else {
+                    item.isFolder ? go(to: u) : { NSWorkspace.shared.open(u) }()
+                }
             }
         }
     }
@@ -462,7 +472,7 @@ final class ExplorerState {
                     self.selection = self.selection.filter(present.contains)
                 case .failure(let e):
                     self.items = []
-                    self.errorMessage = e.localizedDescription
+                    self.errorMessage = Self.describeLoadError(e, dir)
                 }
             }
         }
@@ -586,6 +596,11 @@ final class ExplorerState {
     func transfer(_ sources: [URL], into dir: URL, move: Bool) -> [URL] {
         var plan: [(src: URL, dest: URL)] = []
         var taken = Self.inFlight
+        var applyToAll: ConflictChoice?
+        var conflictsLeft = sources.filter { src in
+            src.deletingLastPathComponent().normalized != dir.normalized &&
+                FileManager.default.fileExists(atPath: dir.appending(path: src.lastPathComponent).path)
+        }.count
         for src in sources {
             // Compare normalized paths: a dropped URL's parent ends in "/" and wouldn't equal `dir`, which
             // turned "move into the folder it is already in" into a rename to "name - Copy".
@@ -593,6 +608,34 @@ final class ExplorerState {
             if dir.standardizedFileURL.path.hasPrefix(src.standardizedFileURL.path + "/") || dir.standardizedFileURL == src.standardizedFileURL {
                 errorMessage = "Can't put “\(src.lastPathComponent)” inside itself."
                 continue
+            }
+            // Same name already in another folder: ask, like Windows' "Replace or Skip Files".
+            // (Pasting into the item's own folder keeps both silently, as "name - Copy".)
+            let direct = dir.appending(path: src.lastPathComponent, directoryHint: .notDirectory)
+            if src.deletingLastPathComponent().normalized != dir.normalized,
+               FileManager.default.fileExists(atPath: direct.path), !taken.contains(direct.path) {
+                let choice = applyToAll ?? {
+                    let isDir = (try? direct.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                    let r = resolveConflict(src.lastPathComponent, isDir, conflictsLeft)
+                    if r.forAll { applyToAll = r.choice }
+                    return r.choice
+                }()
+                conflictsLeft -= 1
+                if choice == .skip { continue }
+                if choice == .replace {
+                    if direct.normalized.path.hasPrefix(src.normalized.path + "/") || src.normalized.path.hasPrefix(direct.normalized.path + "/") {
+                        errorMessage = "Can't replace “\(src.lastPathComponent)” with an item inside it."
+                        continue
+                    }
+                    // The old item goes to the Trash, so a wrong Replace can be put back.
+                    do { try FileManager.default.trashItem(at: direct, resultingItemURL: nil) } catch {
+                        errorMessage = "Couldn't replace “\(src.lastPathComponent)”: \(error.localizedDescription)"
+                        continue
+                    }
+                    taken.insert(direct.path)
+                    plan.append((src, direct))
+                    continue
+                }
             }
             var dest = Self.uniqueURL(in: dir, name: src.lastPathComponent)
             var n = 2
@@ -615,6 +658,28 @@ final class ExplorerState {
             runTransfer(plan, move: move, dir: dir)
         }
         return plan.map { $0.dest.normalized }
+    }
+
+    enum ConflictChoice { case replace, skip, keepBoth }
+
+    /// Asks what to do when an item with the same name is already there. Replaceable for tests.
+    @ObservationIgnored var resolveConflict: (_ name: String, _ isFolder: Bool, _ remaining: Int)
+        -> (choice: ConflictChoice, forAll: Bool) = ExplorerState.askConflict
+
+    static func askConflict(_ name: String, _ isFolder: Bool, _ remaining: Int) -> (choice: ConflictChoice, forAll: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "The destination already has a \(isFolder ? "folder" : "file") named “\(name)”"
+        alert.informativeText = "Replace sends the existing \(isFolder ? "folder" : "file") to the Trash. Keep both adds the new one as “… - Copy”."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Skip")
+        alert.addButton(withTitle: "Keep both")
+        if remaining > 1 {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Do this for all \(remaining) conflicts"
+        }
+        let r = alert.runModal()
+        let choice: ConflictChoice = r == .alertFirstButtonReturn ? .replace : r == .alertSecondButtonReturn ? .skip : .keepBoth
+        return (choice, alert.suppressionButton?.state == .on)
     }
 
     /// Destinations of copies still running in any window, so a second paste can't pick the same name.
@@ -813,9 +878,85 @@ final class ExplorerState {
                 if let r = out as URL? { rec.append((u.normalized, r.normalized)) }
             } catch { errorMessage = error.localizedDescription }
         }
-        if !rec.isEmpty { record(.trash(rec)) }
+        if !rec.isEmpty { record(.trash(rec)); Self.rememberTrashed(rec) }
         selection = []
         reload()
+    }
+
+    // MARK: Recycle Bin
+
+    static var trashURL: URL {
+        (FileManager.default.urls(for: .trashDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".Trash")).normalized
+    }
+    var inTrash: Bool { current == Self.trashURL }
+
+    /// Where each item we moved to the Trash came from (trashed path → original path), so Restore
+    /// can put it back after a relaunch, like Windows' Recycle Bin.
+    private static let trashLogKey = "trashLog"
+    static var trashLog: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: trashLogKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: trashLogKey) }
+    }
+    static func rememberTrashed(_ rec: [(orig: URL, trashed: URL)]) {
+        var log = trashLog
+        for r in rec { log[r.trashed.path] = r.orig.path }
+        trashLog = log
+    }
+
+    func canRestore(_ urls: Set<URL>) -> Bool { !urls.isEmpty && urls.allSatisfy { Self.trashLog[$0.normalized.path] != nil } }
+
+    /// Puts trashed items back where they were deleted from (keeping both if that name is taken again).
+    func restore(_ urls: Set<URL>? = nil) {
+        var log = Self.trashLog
+        var pairs: [(from: URL, to: URL)] = []
+        for u in (urls ?? selection).map(\.normalized) {
+            guard let origPath = log[u.path] else {
+                errorMessage = "Explorer doesn't know where “\(u.lastPathComponent)” was deleted from. Use Move to folder… instead."
+                continue
+            }
+            let orig = URL(filePath: origPath)
+            let parent = orig.deletingLastPathComponent()
+            do {
+                try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                let dest = Self.uniqueURL(in: parent, name: orig.lastPathComponent, suffix: " (restored)")
+                try FileManager.default.moveItem(at: u, to: dest)
+                pairs.append((u, dest.normalized))
+                log[u.path] = nil
+            } catch { errorMessage = error.localizedDescription }
+        }
+        Self.trashLog = log
+        if !pairs.isEmpty { record(.move(pairs)) }
+        selection = []
+        reload()
+    }
+
+    func emptyTrash() {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: Self.trashURL, includingPropertiesForKeys: nil, options: []) else {
+            errorMessage = "Explorer can't open the Trash. Allow Full Disk Access in System Settings → Privacy & Security."
+            return
+        }
+        let visible = items.filter { $0.lastPathComponent != ".DS_Store" }
+        guard !visible.isEmpty else { return }
+        let a = NSAlert()
+        a.messageText = "Permanently delete \(visible.count == 1 ? "this item" : "all \(visible.count) items") in the Recycle Bin?"
+        a.informativeText = "This can't be undone."
+        a.alertStyle = .warning
+        a.addButton(withTitle: "Empty Recycle Bin"); a.addButton(withTitle: "Cancel")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        for u in visible { do { try fm.removeItem(at: u) } catch { errorMessage = error.localizedDescription } }
+        Self.trashLog = [:]
+        reload()
+    }
+
+    /// Load errors in plain words; for privacy blocks, say where to allow access.
+    nonisolated static func describeLoadError(_ e: Error, _ dir: URL) -> String {
+        let ns = e as NSError
+        if ns.domain == NSCocoaErrorDomain && ns.code == NSFileReadNoPermissionError {
+            return "Explorer isn't allowed to open “\(dir.lastPathComponent)”. Allow it in System Settings → Privacy & Security → Full Disk Access (or Files and Folders), then reopen the folder."
+        }
+        return e.localizedDescription
     }
 
     func deletePermanently(_ urls: Set<URL>? = nil) {

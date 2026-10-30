@@ -17,6 +17,14 @@ struct FileItem: Identifiable, Hashable {
     let modified: Date
     let kind: String
     let tags: [FinderTag]
+    /// A Finder alias or symbolic link ("shortcut").
+    let isAlias: Bool
+
+    /// Where an alias or symlink points, or nil if it is broken (or not a shortcut).
+    var aliasTarget: URL? {
+        guard isAlias else { return nil }
+        return (try? URL(resolvingAliasFileAt: url, options: [.withoutUI, .withoutMounting]))?.normalized
+    }
 
     /// A folder you can navigate into (packages such as .app open like files).
     var isFolder: Bool { isDirectory && !isPackage }
@@ -27,11 +35,12 @@ struct FileItem: Identifiable, Hashable {
 
     static let keys: [URLResourceKey] = [
         .isDirectoryKey, .isPackageKey, .isHiddenKey, .isSymbolicLinkKey,
-        .fileSizeKey, .contentModificationDateKey, .localizedTypeDescriptionKey,
+        .fileSizeKey, .contentModificationDateKey, .localizedTypeDescriptionKey, .isAliasFileKey,
     ]
 
     init?(url: URL) {
         guard var v = try? url.resourceValues(forKeys: Set(Self.keys)) else { return nil }
+        isAlias = v.isAliasFile ?? false
         if v.isSymbolicLink == true,
            let r = try? url.resolvingSymlinksInPath().resourceValues(forKeys: Set(Self.keys)) {
             v = r
@@ -106,7 +115,8 @@ enum IconCache {
     static func icon(for item: FileItem) -> NSImage {
         if item.isFolder { return folder }
         let ext = item.url.pathExtension.lowercased()
-        if item.isPackage || ext.isEmpty { return NSWorkspace.shared.icon(forFile: item.url.path) }
+        // Aliases get the system icon, which already carries the shortcut arrow.
+        if item.isPackage || item.isAlias || ext.isEmpty { return NSWorkspace.shared.icon(forFile: item.url.path) }
         if let i = cache[ext] { return i }
         let i = NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
         cache[ext] = i

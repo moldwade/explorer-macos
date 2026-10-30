@@ -34,6 +34,13 @@ struct ItemIcon: View {
                 .foregroundStyle(Theme.folder)
                 .frame(width: size, height: size * 0.85)
                 .frame(width: size, height: size)
+                .overlay(alignment: .bottomLeading) {
+                    if item.isAlias {  // symlinked folder: Windows shortcut arrow
+                        Image(systemName: "arrow.up.right.square.fill")
+                            .resizable().frame(width: size * 0.45, height: size * 0.45)
+                            .foregroundStyle(.white, Theme.accent)
+                    }
+                }
         } else {
             Image(nsImage: IconCache.icon(for: item))
                 .resizable().aspectRatio(contentMode: .fit).frame(width: size, height: size)

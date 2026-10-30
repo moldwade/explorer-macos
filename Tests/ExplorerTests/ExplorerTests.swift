@@ -157,6 +157,30 @@ final class ExplorerTests: XCTestCase {
         XCTAssertEqual(s.displayed.map(\.name), ["c.txt", "a.txt", "b.txt"])
     }
 
+    func testConflictReplaceAndSkip() async throws {
+        let src = dir.appending(path: "src"), dst = dir.appending(path: "dst").normalized
+        try fm.createDirectory(at: src, withIntermediateDirectories: false)
+        try fm.createDirectory(at: dst, withIntermediateDirectories: false)
+        try touch("a.txt", "new", in: src); try touch("b.txt", "new", in: src)
+        try touch("a.txt", "old", in: dst); try touch("b.txt", "old", in: dst)
+        let s = ExplorerState(start: dst); await settle()
+        var answers: [ExplorerState.ConflictChoice] = [.replace, .skip]
+        s.resolveConflict = { _, _, _ in (answers.removeFirst(), false) }
+        s.transfer([src.appending(path: "a.txt"), src.appending(path: "b.txt")], into: dst, move: false)
+        await settle()
+        XCTAssertEqual(try String(contentsOf: dst.appending(path: "a.txt"), encoding: .utf8), "new")
+        XCTAssertEqual(try String(contentsOf: dst.appending(path: "b.txt"), encoding: .utf8), "old")
+    }
+
+    func testShortcutToFolderOpensFolder() async throws {
+        let target = dir.appending(path: "Customers").normalized
+        try fm.createDirectory(at: target, withIntermediateDirectories: false)
+        let s = ExplorerState(start: dir); await settle()
+        let alias = try XCTUnwrap(s.makeShortcut(to: target, in: dir))
+        s.open([alias.normalized])
+        XCTAssertEqual(s.current, target)
+    }
+
     func testCannotMoveFolderIntoItself() async throws {
         let sub = dir.appending(path: "sub").normalized
         try fm.createDirectory(at: sub, withIntermediateDirectories: false)
