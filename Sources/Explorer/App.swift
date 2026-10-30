@@ -169,6 +169,13 @@ struct ExplorerCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .appInfo) {
             Button("Install ‘explorermac’ Command…") { CLIInstaller.install() }
+            Menu("Language") {
+                ForEach(AppLanguage.choices, id: \.code) { lang in
+                    Toggle(isOn: Binding(get: { AppLanguage.current == lang.code }, set: { _ in AppLanguage.set(lang.code) })) {
+                        if lang.code == nil { Text("System default") } else { Text(verbatim: lang.name) }
+                    }
+                }
+            }
         }
         CommandGroup(replacing: .newItem) {
             Button("New Window") { openWindow(value: WindowSpec(url: ex?.current ?? home)) }.keyboardShortcut("n")
@@ -209,6 +216,7 @@ struct ExplorerCommands: Commands {
             Button("Refresh") { ex?.reload() }.keyboardShortcut("r")
             Divider()
             Button("Address Bar") { ex?.editingPath = true }.keyboardShortcut("l")
+            Button("Go to Folder…") { ex?.showPalette = true }.keyboardShortcut("k")
             Button("Search") { ex?.searchFocusRequest += 1 }.keyboardShortcut("e", modifiers: .control)
             Divider()
             // Windows Explorer keys.
@@ -230,11 +238,38 @@ struct ExplorerCommands: Commands {
         CommandGroup(after: .toolbar) {
             Menu("Layout") {
                 ForEach(Array(ViewMode.allCases.enumerated()), id: \.element) { i, m in
-                    Button(m.rawValue) { ex?.viewMode = m }.keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
+                    Button(L(m.rawValue)) { ex?.viewMode = m }.keyboardShortcut(KeyEquivalent(Character("\(i + 1)")))
                 }
             }
             Button("Details Pane") { ex?.showDetailsPane.toggle() }.keyboardShortcut("p", modifiers: [.option, .shift])
             Button("Hidden Items") { ex?.showHidden.toggle() }.keyboardShortcut(".", modifiers: [.command, .shift])
+        }
+    }
+}
+
+/// Interface language, chosen in the app menu; overrides the macOS language for Explorer only.
+enum AppLanguage {
+    static let choices: [(code: String?, name: String)] = [(nil, ""), ("en", "English"), ("tr", "Türkçe"), ("bs", "Bosanski")]
+
+    static var current: String? {
+        guard UserDefaults.standard.persistentDomain(forName: Bundle.main.bundleIdentifier ?? "")?["AppleLanguages"] != nil
+        else { return nil }
+        return UserDefaults.standard.stringArray(forKey: "AppleLanguages")?.first
+    }
+
+    @MainActor static func set(_ code: String?) {
+        guard code != current else { return }
+        if let code { UserDefaults.standard.set([code], forKey: "AppleLanguages") }
+        else { UserDefaults.standard.removeObject(forKey: "AppleLanguages") }
+        let a = NSAlert()
+        a.messageText = String(localized: "Restart Explorer to use the new language.")
+        a.addButton(withTitle: String(localized: "Restart now"))
+        a.addButton(withTitle: String(localized: "Later"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: cfg) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
         }
     }
 }

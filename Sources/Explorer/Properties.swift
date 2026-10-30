@@ -66,7 +66,7 @@ struct PropertiesView: View {
 
     private func row(_ k: String, _ v: String) -> some View {
         HStack(alignment: .top) {
-            Text(k).foregroundStyle(Theme.secondary).frame(width: 90, alignment: .trailing)
+            Text(L(k)).foregroundStyle(Theme.secondary).frame(width: 90, alignment: .trailing)
             Text(v).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -80,10 +80,10 @@ struct PropertiesView: View {
             Divider()
             row("Type:", info.kind)
             row("Location:", info.location)
-            row("Size:", loaded ? bytes(info.size) : "Calculating…")
-            row("Size on disk:", loaded ? bytes(info.onDisk) : "Calculating…")
+            row("Size:", loaded ? bytes(info.size) : L("Calculating…"))
+            row("Size on disk:", loaded ? bytes(info.onDisk) : L("Calculating…"))
             if info.folders + info.files > 0 && (urls.count > 1 || urls.first.map { state.item(for: $0)?.isDirectory == true } == true) {
-                row("Contains:", loaded ? "\(info.files) Files, \(info.folders) Folders" : "Calculating…")
+                row("Contains:", loaded ? String(localized: "\(info.files) Files, \(info.folders) Folders") : L("Calculating…"))
             }
             Divider()
             row("Created:", date(info.created))

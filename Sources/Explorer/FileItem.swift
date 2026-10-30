@@ -149,3 +149,30 @@ struct TreeNode: Identifiable, Hashable {
         return dirs.isEmpty ? nil : dirs
     }
 }
+
+/// A saved Spotlight search shown in the navigation pane.
+struct SmartFolder: Identifiable, Hashable {
+    let id: String
+    let title: LocalizedStringResource
+    let icon: String
+    let query: String
+
+    var url: URL { URL(string: "explorer-smart://\(id)")! }
+    var titleText: String { String(localized: title) }
+
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id }
+    func hash(into h: inout Hasher) { h.combine(id) }
+
+    /// Office-type documents: PDF/Word/RTF/Pages, spreadsheets, presentations (not source code or logs).
+    private static let documents = "(kMDItemContentTypeTree == \"public.composite-content\" || kMDItemContentTypeTree == \"public.spreadsheet\" || kMDItemContentTypeTree == \"public.presentation\")"
+    static let all: [SmartFolder] = [
+        SmartFolder(id: "recent", title: "Recent documents", icon: "clock",
+                    query: "kMDItemFSContentChangeDate >= $time.today(-7) && \(documents)"),
+        SmartFolder(id: "pdf7", title: "PDFs – last 7 days", icon: "doc.richtext",
+                    query: "kMDItemFSContentChangeDate >= $time.today(-7) && kMDItemContentTypeTree == \"com.adobe.pdf\""),
+        SmartFolder(id: "sheets30", title: "Spreadsheets – last 30 days", icon: "tablecells",
+                    query: "kMDItemFSContentChangeDate >= $time.today(-30) && (kMDItemContentTypeTree == \"public.spreadsheet\" || kMDItemContentTypeTree == \"public.comma-separated-values-text\")"),
+        SmartFolder(id: "images7", title: "Images – last 7 days", icon: "photo",
+                    query: "kMDItemFSContentChangeDate >= $time.today(-7) && kMDItemContentTypeTree == \"public.image\""),
+    ]
+}

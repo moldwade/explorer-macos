@@ -7,7 +7,7 @@ struct ViewMenuItems: View {
     let state: ExplorerState
     var body: some View {
         ForEach(ViewMode.allCases) { m in
-            Toggle(m.rawValue, isOn: Binding(get: { state.viewMode == m }, set: { _ in state.viewMode = m }))
+            Toggle(L(m.rawValue), isOn: Binding(get: { state.viewMode == m }, set: { _ in state.viewMode = m }))
         }
         Divider()
         Toggle("Details pane", isOn: Binding(get: { state.showDetailsPane }, set: { state.showDetailsPane = $0 }))
@@ -26,7 +26,7 @@ struct SortMenuItems: View {
     ]
     var body: some View {
         ForEach(cols, id: \.0) { c in
-            Toggle(c.0, isOn: Binding(get: { state.sortKey == c.1 },
+            Toggle(L(c.0), isOn: Binding(get: { state.sortKey == c.1 },
                                       set: { _ in state.applySort(c.1, ascending: state.sortAscending) }))
         }
         Divider()
@@ -41,7 +41,7 @@ struct GroupMenuItems: View {
     let state: ExplorerState
     var body: some View {
         ForEach(GroupKey.allCases) { g in
-            Toggle(g.rawValue, isOn: Binding(get: { state.group == g }, set: { _ in state.group = g }))
+            Toggle(L(g.rawValue), isOn: Binding(get: { state.group == g }, set: { _ in state.group = g }))
         }
     }
 }
@@ -53,7 +53,7 @@ struct NewMenuItems: View {
         Button { state.newShortcutViaPicker() } label: { Label("Shortcut", systemImage: "arrow.uturn.right.square") }
         Divider()
         ForEach(NewKind.allCases.filter { $0 != .folder }, id: \.self) { k in
-            Button(k.rawValue) { state.newItem(k) }
+            Button(L(k.rawValue)) { state.newItem(k) }
         }
     }
 }
@@ -138,7 +138,7 @@ private struct SelectionMenu: View {
         Button("Copy as path") { state.copyPaths(sel) }
         Button(sel.allSatisfy(state.isFavorite) ? "Remove from Favorites" : "Add to Favorites") { state.toggleFavorite(sel) }
         TagsMenu(state: state, sel: sel)
-        if state.tagFilter != nil, let s = single { Button("Open file location") { state.revealInList(s.url) } }
+        if state.isVirtual || !state.searchText.isEmpty, let s = single { Button("Open file location") { state.revealInList(s.url) } }
         Button("Properties") { state.propertiesTarget = Array(sel) }
         Divider()
 

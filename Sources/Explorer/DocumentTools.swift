@@ -23,7 +23,7 @@ extension ExplorerState {
                     self.reload()
                     self.selection = Set(made.map(\.normalized))
                 case .success: break
-                case .failure(let e): self.errorMessage = "\(failure): \(e.localizedDescription)"
+                case .failure(let e): self.errorMessage = failure + ": " + e.localizedDescription
                 }
             }
         }
@@ -35,7 +35,7 @@ extension ExplorerState {
         let list = ordered(urls).filter(isPDF)
         guard list.count > 1, let first = list.first else { return }
         let dest = Self.uniqueURL(in: first.deletingLastPathComponent(), name: "Merged.pdf", suffix: " (1)")
-        produce("Couldn't merge the PDFs") {
+        produce(String(localized: "Couldn't merge the PDFs")) {
             let out = PDFDocument()
             for u in list {
                 guard let doc = PDFDocument(url: u) else { throw ToolError("Can't read “\(u.lastPathComponent)” (protected or damaged?)") }
@@ -50,7 +50,7 @@ extension ExplorerState {
     func splitPDF(_ u: URL) {
         let base = u.deletingPathExtension().lastPathComponent
         let folder = Self.uniqueURL(in: u.deletingLastPathComponent(), name: "\(base) (pages)", suffix: " (1)")
-        produce("Couldn't split “\(u.lastPathComponent)”") {
+        produce(String(localized: "Couldn't split “\(u.lastPathComponent)”")) {
             guard let doc = PDFDocument(url: u) else { throw ToolError("Can't read the PDF (protected or damaged?)") }
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
             let digits = String(doc.pageCount).count
@@ -78,7 +78,7 @@ extension ExplorerState {
             }
             let names = failed
             await MainActor.run {
-                if !names.isEmpty { self.errorMessage = "Couldn't rotate: \(names.joined(separator: ", "))" }
+                if !names.isEmpty { let list = names.joined(separator: ", "); self.errorMessage = String(localized: "Couldn't rotate: \(list)") }
                 self.reload()
             }
         }
@@ -101,7 +101,7 @@ extension ExplorerState {
             (u, Self.uniqueURL(in: u.deletingLastPathComponent(),
                                name: u.deletingPathExtension().lastPathComponent + suffix + "." + ext, suffix: " (1)"))
         }
-        produce("Couldn't convert the image") {
+        produce(String(localized: "Couldn't convert the image")) {
             var made: [URL] = []
             for (src, dest) in plan {
                 let p = Process()
@@ -126,7 +126,7 @@ extension ExplorerState {
         guard let first = list.first else { return }
         let name = list.count == 1 ? first.deletingPathExtension().lastPathComponent + ".pdf" : "Images.pdf"
         let dest = Self.uniqueURL(in: first.deletingLastPathComponent(), name: name, suffix: " (1)")
-        produce("Couldn't make a PDF from the images") {
+        produce(String(localized: "Couldn't make a PDF from the images")) {
             let out = PDFDocument()
             for u in list {
                 // PDFPage(image:) raises an Objective-C exception (a crash) for an image without bitmap

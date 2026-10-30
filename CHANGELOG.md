@@ -15,12 +15,17 @@ All notable changes are documented here. The project follows [Semantic Versionin
 - Windows keys: Backspace/Alt+arrows/mouse buttons 4–5 navigate, F3/F4/F5, Alt+D, Ctrl+E; Delete key trashes
 - View › Show › File name extensions; click-pause-click to rename
 - Grouped by date: items ordered by full date and time
+- ⌘K "Go to folder" palette with recent folders, favourites and Spotlight folder search
+- Smart folders (recent documents, PDFs/images last 7 days, spreadsheets last 30 days)
+- Turkish and Bosnian interface (Explorer → Language), with all menus, dialogs and messages translated
+- Swift Testing suites for cut/paste, transfers, selection, conflicts, aliases, tools and tags
 
 ### Fixed
 - Data safety: a failed source delete during a cross-volume move no longer deletes the copy; copy errors are no longer ignored; parallel copies can't overwrite each other; undo continues past failures; safer ZIP
 - Dropping files into their own folder renamed them to "name - Copy"
 - Clicking below the last row didn't deselect or start a drag-box; selection was slow in big folders; Shift+arrows couldn't grow upward
 - New tabs flashed as a separate window first; rebuilds re-asked for folder permissions
+- Undoing a move to another disk froze the window; it now runs in the background with progress
 
 ## [1.2.1] — 2026-10-07
 

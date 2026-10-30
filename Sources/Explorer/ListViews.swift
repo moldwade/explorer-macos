@@ -235,7 +235,7 @@ struct DetailsList: View {
                         MarqueeLayer(state: state)
                         LazyVStack(spacing: 0) {
                             ForEach(groups, id: \.title) { g in
-                                if state.group != .none { GroupHeader(title: g.title, count: g.items.count) }
+                                if state.group != .none { GroupHeader(title: L(g.title), count: g.items.count) }
                                 ForEach(g.items) { item in DetailRow(state: state, item: item).id(item.url) }
                             }
                         }
@@ -277,7 +277,7 @@ private struct HeaderRow: View {
             Button { state.setSort(key) } label: {
                 HStack(spacing: 4) {
                     if trailing { Spacer(minLength: 0) }
-                    Text(title).font(.system(size: 12)).foregroundStyle(active ? Theme.accent : Theme.secondary)
+                    Text(L(title)).font(.system(size: 12)).foregroundStyle(active ? Theme.accent : Theme.secondary)
                     if active { Image(systemName: asc ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.secondary) }
                     if !trailing { Spacer(minLength: 0) }
                 }
@@ -370,7 +370,7 @@ struct IconsGrid: View {
                     MarqueeLayer(state: state)
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(groups, id: \.title) { g in
-                            if state.group != .none { GroupHeader(title: g.title, count: g.items.count) }
+                            if state.group != .none { GroupHeader(title: L(g.title), count: g.items.count) }
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: cell, maximum: cell), spacing: 6, alignment: .top)],
                                       alignment: .leading, spacing: horizontal ? 2 : 8) {
                                 ForEach(g.items) { item in

@@ -23,6 +23,10 @@ enum Theme {
 }
 
 /// File/folder icon. Folders use the Windows-style yellow glyph.
+/// Looks up the translation of a UI string held in a variable (literals in SwiftUI views are
+/// translated automatically). Falls back to the English text.
+func L(_ s: String) -> String { NSLocalizedString(s, comment: "") }
+
 struct ItemIcon: View {
     let item: FileItem
     var size: CGFloat = 18

@@ -58,6 +58,9 @@ If you're a Windows person stuck on a Mac (or just tired of Finder), this is for
 - Search matches names (accent-insensitive) and, through Spotlight, **text inside documents**
 - Right-click **PDF tools** (merge, split, rotate) and **image tools** (resize for email, convert, combine into PDF)
 - Shortcuts (aliases) open their target folder; middle-click opens a folder in a new tab or closes a tab
+- **Go to folder** palette (⌘K): type part of a customer/project folder name and jump there (⌘↩ for a new tab)
+- **Smart folders**: recent documents, PDFs and images from the last 7 days, spreadsheets from the last 30 days
+- Interface in **English, Türkçe or Bosanski** (Explorer menu → Language)
 - Copy/move runs in the background with a **progress bar and Cancel**; APFS copies are instant clones
 - Live refresh when files change outside the app
 
@@ -73,6 +76,7 @@ If you're a Windows person stuck on a Mac (or just tired of Finder), this is for
 | Windows keys: Back / Forward / Up / Refresh | ⌫ or ⌥← or mouse button 4 / ⌥→ or mouse button 5 / ⌥↑ / F5 |
 | Address bar | ⌘L, F4 or ⌥D |
 | Search box | F3 or ⌃E |
+| Go to folder palette | ⌘K |
 | Open folder in new tab / close tab | Middle-click folder / middle-click tab |
 | Properties | ⌥↩ |
 | Details pane | ⌥⇧P |

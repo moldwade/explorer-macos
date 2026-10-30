@@ -68,6 +68,7 @@ struct ContentView: View {
             }
         }
         .quickLookPreview($state.quickLook, in: state.selectedItems.map(\.url))
+        .sheet(isPresented: $state.showPalette) { CommandPalette(state: state) }
         .sheet(isPresented: Binding(get: { state.propertiesTarget != nil }, set: { if !$0 { state.propertiesTarget = nil } })) {
             if let t = state.propertiesTarget { PropertiesView(state: state, urls: t) }
         }
@@ -131,10 +132,14 @@ struct SidebarView: View {
     static func tagURL(_ t: FinderTag) -> URL { URL(string: "explorer-tag://\(t.color)")! }
 
     var body: some View {
-        List(selection: Binding<URL?>(get: { state.tagFilter.map(Self.tagURL) ?? state.current }, set: { u in
+        List(selection: Binding<URL?>(get: {
+            state.tagFilter.map(Self.tagURL) ?? state.smartFolder.map(\.url) ?? state.current
+        }, set: { u in
             guard let u else { return }
             if u.scheme == "explorer-tag" {
                 if let tag = FinderTag.standard.first(where: { Self.tagURL($0) == u }) { state.showTag(tag) }
+            } else if let f = SmartFolder.all.first(where: { $0.url == u }) {
+                state.showSmartFolder(f)
             } else {
                 state.go(to: u)  // a favourite file opens in its app
             }
@@ -166,7 +171,7 @@ struct SidebarView: View {
             }
             Section("Quick access") {
                 ForEach(defaults, id: \.url) { q in
-                    Label { Text(q.title) } icon: { Image(systemName: q.icon).foregroundStyle(q.color) }
+                    Label { Text(L(q.title)) } icon: { Image(systemName: q.icon).foregroundStyle(q.color) }
                         .tag(q.url)
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: q.url); return true }
                 }
@@ -175,6 +180,12 @@ struct SidebarView: View {
                         .tag(url)
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: url); return true }
                         .contextMenu { Button("Unpin from Quick access") { state.togglePin(url) } }
+                }
+            }
+            Section("Smart folders") {
+                ForEach(SmartFolder.all) { f in
+                    Label { Text(f.title) } icon: { Image(systemName: f.icon).foregroundStyle(Theme.accent) }
+                        .tag(f.url)
                 }
             }
             Section("Tags") {
@@ -368,10 +379,10 @@ struct StatusBar: View {
         let total = sel.filter { !$0.isFolder }.reduce(Int64(0)) { $0 + $1.size }
         let n = state.displayed.count
         HStack(spacing: 10) {
-            Text("\(n) item\(n == 1 ? "" : "s")")
+            Text(n == 1 ? String(localized: "1 item") : String(localized: "\(n) items"))
             if !sel.isEmpty {
                 Divider().frame(height: 12)
-                Text("\(sel.count) item\(sel.count == 1 ? "" : "s") selected" + (total > 0 ? "  \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))" : ""))
+                Text((sel.count == 1 ? String(localized: "1 item selected") : String(localized: "\(sel.count) items selected")) + (total > 0 ? "  \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))" : ""))
             }
             Spacer()
             if let job = state.transferJob, job.visible {

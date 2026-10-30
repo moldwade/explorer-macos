@@ -82,7 +82,7 @@ extension ExplorerState {
         let args = ["-r", "-q", "-y", dest.path] + (sameParent ? list.map { "./" + $0.lastPathComponent } : list.map(\.path))
         run("/usr/bin/zip", args, cwd: sameParent ? parent : nil) { ok in
             if ok { self.record(.create([dest.normalized])); self.reload(); self.selection = [dest.normalized] }
-            else { try? FileManager.default.removeItem(at: dest); self.errorMessage = "Couldn't compress the selection." }
+            else { try? FileManager.default.removeItem(at: dest); self.errorMessage = String(localized: "Couldn't compress the selection.") }
         }
     }
 
@@ -96,7 +96,7 @@ extension ExplorerState {
         let zip = u.pathExtension.lowercased() == "zip"
         run(zip ? "/usr/bin/ditto" : "/usr/bin/tar", zip ? ["-x", "-k", u.path, dest.path] : ["-xf", u.path, "-C", dest.path]) { ok in
             if ok { self.record(.create([dest.normalized])); self.reload(); self.selection = [dest.normalized] }
-            else { try? FileManager.default.removeItem(at: dest); self.errorMessage = "Couldn't extract “\(u.lastPathComponent)”." }
+            else { try? FileManager.default.removeItem(at: dest); self.errorMessage = String(localized: "Couldn't extract “\(u.lastPathComponent)”.") }
         }
     }
 
@@ -158,16 +158,16 @@ extension ExplorerState {
 
     func connectToServer() {
         let a = NSAlert()
-        a.messageText = "Connect to server"
-        a.informativeText = "Enter a server address, for example smb://server/share or nfs://host/path."
+        a.messageText = String(localized: "Connect to server")
+        a.informativeText = String(localized: "Enter a server address, for example smb://server/share or nfs://host/path.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.placeholderString = "smb://server/share"
         a.accessoryView = field
-        a.addButton(withTitle: "Connect"); a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: String(localized: "Connect")); a.addButton(withTitle: String(localized: "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let text = field.stringValue.trimmingCharacters(in: .whitespaces)
         guard let url = URL(string: text), let scheme = url.scheme, ["smb", "nfs", "afp", "ftp", "http", "https", "vnc"].contains(scheme.lowercased()) else {
-            errorMessage = "“\(text)” isn't a valid server address."; return
+            errorMessage = String(localized: "“\(text)” isn't a valid server address."); return
         }
         NSWorkspace.shared.open(url)   // macOS mounts the share; it then appears under Network
     }
@@ -193,7 +193,7 @@ extension ExplorerState {
     }
 
     func printFiles(_ urls: Set<URL>) {
-        run("/usr/bin/lpr", urls.map(\.path)) { ok in if !ok { self.errorMessage = "Couldn't print (no default printer?)." } }
+        run("/usr/bin/lpr", urls.map(\.path)) { ok in if !ok { self.errorMessage = String(localized: "Couldn't print (no default printer?).") } }
     }
 
     // MARK: Finder tags
@@ -208,7 +208,7 @@ extension ExplorerState {
         for u in urls {
             var tags = FinderTag.read(u).filter { $0.name != tag.name }
             if !remove { tags.append(tag) }
-            if !FinderTag.write(tags, to: u) { errorMessage = "Couldn't change the tags of “\(u.lastPathComponent)”." }
+            if !FinderTag.write(tags, to: u) { errorMessage = String(localized: "Couldn't change the tags of “\(u.lastPathComponent)”.") }
         }
         reload()
     }

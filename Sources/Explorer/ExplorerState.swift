@@ -87,6 +87,8 @@ final class ExplorerState {
     var pinned: [URL] = (UserDefaults.standard.stringArray(forKey: "pinned") ?? []).map { URL(filePath: $0) }
     /// Files and folders the user marked as favourites (Windows 11 "Add to Favorites").
     var favorites: [URL] = (UserDefaults.standard.stringArray(forKey: "favorites") ?? []).map { URL(filePath: $0) }
+    /// The ⌘K "Go to folder" palette.
+    var showPalette = false
     /// Bumped to move keyboard focus into the search box (F3 / Ctrl+E).
     var searchFocusRequest = 0
     /// View > Show > File name extensions (Windows); on by default, as on a Mac.
@@ -97,6 +99,10 @@ final class ExplorerState {
     @ObservationIgnored var pendingRename: URL?
     /// When set, the list shows every file on the Mac with this Finder tag instead of a folder.
     var tagFilter: FinderTag?
+    /// When set, the list shows the results of a saved Spotlight search ("smart folder").
+    var smartFolder: SmartFolder?
+    /// A tag or smart-folder listing rather than a real folder.
+    var isVirtual: Bool { tagFilter != nil || smartFolder != nil }
     var undoStack: [UndoOp] = []
     var nameW: CGFloat = 320
     var dateW: CGFloat = 160
@@ -163,7 +169,7 @@ final class ExplorerState {
     /// key press, so the sorted/grouped result is kept until one of its inputs changes.
     private var list: ListCache {
         // Reading the inputs here also registers them for observation on a cache hit.
-        let key = ListKey(version: listVersion, searching: !searchText.isEmpty || tagFilter != nil, hidden: showHidden,
+        let key = ListKey(version: listVersion, searching: !searchText.isEmpty || isVirtual, hidden: showHidden,
                           sort: sortOrder, group: group)
         if let c = listCache, c.key == key { return c }
         let groups = makeGroups(sortedVisible)
@@ -175,7 +181,7 @@ final class ExplorerState {
     }
 
     private var sortedVisible: [FileItem] {
-        let base = searchText.isEmpty && tagFilter == nil ? items : searchResults
+        let base = searchText.isEmpty && !isVirtual ? items : searchResults
         let visible = showHidden ? base : base.filter { !$0.isHidden }
         let sorted = visible.sorted(using: sortOrder)
         return sorted.filter(\.isFolder) + sorted.filter { !$0.isFolder }
@@ -290,7 +296,7 @@ final class ExplorerState {
     // MARK: Undo / pins
 
     func record(_ op: UndoOp) { undoStack.append(op); if undoStack.count > 50 { undoStack.removeFirst() } }
-    var undoLabel: String? { undoStack.last.map { "Undo \($0.label)" } }
+    var undoLabel: String? { undoStack.last.map { String(localized: "Undo \(L($0.label))") } }
 
     /// Undoes as much of the last operation as it can; whatever fails stays on the stack to retry.
     func undo() {
@@ -304,8 +310,24 @@ final class ExplorerState {
         case .rename(let f, let t):
             if !attempt({ try fm.moveItem(at: t, to: f) }) { undoStack.append(op) }
         case .move(let pairs):
-            let left = pairs.filter { p in !attempt { try fm.moveItem(at: p.to, to: p.from) } }
+            // Moving back across volumes is a real copy: run it in the background with progress
+            // instead of freezing the window, and don't record it as a new undo step.
+            let far = pairs.filter { !sameVolume($0.to, $0.from.deletingLastPathComponent()) }
+            let near = pairs.filter { p in !far.contains { $0.to == p.to } }
+            let left = near.filter { p in !attempt { try fm.moveItem(at: p.to, to: p.from) } }
             if !left.isEmpty { undoStack.append(.move(left)) }
+            if !far.isEmpty {
+                let blocked = far.filter { fm.fileExists(atPath: $0.from.path) }
+                if !blocked.isEmpty {
+                    undoStack.append(.move(blocked))
+                    if firstError == nil { firstError = ToolError("“\(blocked[0].from.lastPathComponent)” already exists where it came from.") }
+                }
+                let todo = far.filter { !fm.fileExists(atPath: $0.from.path) }
+                if !todo.isEmpty {
+                    runTransfer(todo.map { (src: $0.to, dest: $0.from) }, move: true,
+                                dir: todo[0].from.deletingLastPathComponent(), recordUndo: false)
+                }
+            }
         case .create(let urls):
             let left = urls.filter { u in !attempt { try fm.trashItem(at: u, resultingItemURL: nil) } }
             if !left.isEmpty { undoStack.append(.create(left)) }
@@ -336,15 +358,31 @@ final class ExplorerState {
 
     /// Lists every file carrying `tag`, found through Spotlight (the same index Finder's tag view uses).
     func showTag(_ tag: FinderTag) {
-        searchTask?.cancel()
+        smartFolder = nil
         tagFilter = tag
+        let name = tag.name
+        showQuery { Self.filesTagged(name) }
+    }
+
+    /// Lists the results of a saved Spotlight query, e.g. "PDFs from the last 7 days".
+    func showSmartFolder(_ f: SmartFolder) {
+        tagFilter = nil
+        smartFolder = f
+        let query = f.query
+        showQuery {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            return Self.mdfind([query], onlyIn: home).filter { !$0.url.path.hasPrefix(home + "/Library/") }
+        }
+    }
+
+    private func showQuery(_ find: @escaping @Sendable () -> [FileItem]) {
+        searchTask?.cancel()
         searchText = ""
         selection = []
         searchResults = []
         isSearching = true
-        let name = tag.name
         searchTask = Task { [weak self] in
-            let found = await Task.detached { Self.filesTagged(name) }.value
+            let found = await Task.detached { find() }.value
             if Task.isCancelled { return }
             self?.searchResults = found
             self?.isSearching = false
@@ -352,18 +390,26 @@ final class ExplorerState {
     }
 
     nonisolated static func filesTagged(_ name: String) -> [FileItem] {
+        let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return mdfind(["kMDItemUserTags == \"\(escaped)\"c"])
+    }
+
+    /// Runs Spotlight's command-line search; skips hidden files and items inside packages.
+    nonisolated static func mdfind(_ query: [String], onlyIn: String? = nil) -> [FileItem] {
         let p = Process()
         p.executableURL = URL(filePath: "/usr/bin/mdfind")
-        let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        p.arguments = ["kMDItemUserTags == \"\(escaped)\"c"]
+        p.arguments = (onlyIn.map { ["-onlyin", $0] } ?? []) + query
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return [] }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        return String(decoding: data, as: UTF8.self).split(separator: "\n").prefix(5000)
-            .compactMap { FileItem(url: URL(filePath: String($0))) }
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").lazy
+            .map(String.init)
+            .filter { !$0.contains("/.") && $0.range(of: #"\.(app|bundle|framework|photoslibrary)/"#, options: .regularExpression) == nil }
+            .prefix(5000)
+            .compactMap { FileItem(url: URL(filePath: $0)) }
     }
 
     func isPinned(_ u: URL) -> Bool { pinned.contains(u.normalized) }
@@ -376,7 +422,7 @@ final class ExplorerState {
     var selectedItems: [FileItem] {
         selection.compactMap { displayIndex(of: $0) }.sorted().map { displayed[$0] }
     }
-    var title: String { tagFilter?.name ?? FileManager.default.displayName(atPath: current.path) }
+    var title: String { tagFilter?.name ?? smartFolder?.titleText ?? FileManager.default.displayName(atPath: current.path) }
     var canGoUp: Bool { current.path != "/" }
     var hasClipboard: Bool { !clipboard.isEmpty || !pasteboardURLs().isEmpty }
 
@@ -402,14 +448,15 @@ final class ExplorerState {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir), isDir.boolValue else {
             if FileManager.default.fileExists(atPath: target.path) { NSWorkspace.shared.open(target) }
-            else { errorMessage = "Can't find “\(target.path)”." }
+            else { errorMessage = String(localized: "Can't find “\(target.path)”.") }
             return
         }
-        if target != current || tagFilter != nil {
+        if target != current || isVirtual {
             if push && target != current { back.append(current); forward.removeAll() }
             current = target
         }
         tagFilter = nil
+        smartFolder = nil
         searchText = ""
         searchResults = []
         selection = []
@@ -417,6 +464,7 @@ final class ExplorerState {
         editingPath = false
         reload()
         watch()
+        Self.noteRecent(target)
     }
 
     func goBack() {
@@ -451,7 +499,7 @@ final class ExplorerState {
         for u in urls {
             if let item = items.first(where: { $0.url == u }) ?? FileItem(url: u) {
                 if item.isAlias, !item.isFolder {
-                    guard let t = item.aliasTarget else { errorMessage = "The item “\(item.name)” points to can't be found."; continue }
+                    guard let t = item.aliasTarget else { errorMessage = String(localized: "The item “\(item.name)” points to can't be found."); continue }
                     go(to: t)  // folders open here, files in their app
                 } else {
                     item.isFolder ? go(to: u) : { NSWorkspace.shared.open(u) }()
@@ -501,7 +549,7 @@ final class ExplorerState {
     // MARK: Search (recursive, like Explorer)
 
     func search() {
-        guard tagFilter == nil else { return }  // the tag view owns searchResults
+        guard !isVirtual else { return }  // tag and smart-folder views own searchResults
         searchTask?.cancel()
         let q = searchText
         guard !q.isEmpty else { searchResults = []; isSearching = false; return }
@@ -652,7 +700,7 @@ final class ExplorerState {
             // turned "move into the folder it is already in" into a rename to "name - Copy".
             if move && src.deletingLastPathComponent().normalized == dir.normalized { continue }
             if dir.standardizedFileURL.path.hasPrefix(src.standardizedFileURL.path + "/") || dir.standardizedFileURL == src.standardizedFileURL {
-                errorMessage = "Can't put “\(src.lastPathComponent)” inside itself."
+                errorMessage = String(localized: "Can't put “\(src.lastPathComponent)” inside itself.")
                 continue
             }
             // Same name already in another folder: ask, like Windows' "Replace or Skip Files".
@@ -670,12 +718,12 @@ final class ExplorerState {
                 if choice == .skip { continue }
                 if choice == .replace {
                     if direct.normalized.path.hasPrefix(src.normalized.path + "/") || src.normalized.path.hasPrefix(direct.normalized.path + "/") {
-                        errorMessage = "Can't replace “\(src.lastPathComponent)” with an item inside it."
+                        errorMessage = String(localized: "Can't replace “\(src.lastPathComponent)” with an item inside it.")
                         continue
                     }
                     // The old item goes to the Trash, so a wrong Replace can be put back.
                     do { try FileManager.default.trashItem(at: direct, resultingItemURL: nil) } catch {
-                        errorMessage = "Couldn't replace “\(src.lastPathComponent)”: \(error.localizedDescription)"
+                        errorMessage = String(localized: "Couldn't replace “\(src.lastPathComponent)”: \(error.localizedDescription)")
                         continue
                     }
                     taken.insert(direct.path)
@@ -714,14 +762,15 @@ final class ExplorerState {
 
     static func askConflict(_ name: String, _ isFolder: Bool, _ remaining: Int) -> (choice: ConflictChoice, forAll: Bool) {
         let alert = NSAlert()
-        alert.messageText = "The destination already has a \(isFolder ? "folder" : "file") named “\(name)”"
-        alert.informativeText = "Replace sends the existing \(isFolder ? "folder" : "file") to the Trash. Keep both adds the new one as “… - Copy”."
-        alert.addButton(withTitle: "Replace")
-        alert.addButton(withTitle: "Skip")
-        alert.addButton(withTitle: "Keep both")
+        alert.messageText = isFolder ? String(localized: "The destination already has a folder named “\(name)”")
+                                     : String(localized: "The destination already has a file named “\(name)”")
+        alert.informativeText = String(localized: "Replace sends the existing item to the Trash. Keep both adds the new one as “… - Copy”.")
+        alert.addButton(withTitle: String(localized: "Replace"))
+        alert.addButton(withTitle: String(localized: "Skip"))
+        alert.addButton(withTitle: String(localized: "Keep both"))
         if remaining > 1 {
             alert.showsSuppressionButton = true
-            alert.suppressionButton?.title = "Do this for all \(remaining) conflicts"
+            alert.suppressionButton?.title = String(localized: "Do this for all \(remaining) conflicts")
         }
         let r = alert.runModal()
         let choice: ConflictChoice = r == .alertFirstButtonReturn ? .replace : r == .alertSecondButtonReturn ? .skip : .keepBoth
@@ -731,8 +780,8 @@ final class ExplorerState {
     /// Destinations of copies still running in any window, so a second paste can't pick the same name.
     static var inFlight = Set<String>()
 
-    private func runTransfer(_ plan: [(src: URL, dest: URL)], move: Bool, dir: URL) {
-        let job = TransferJob(title: move ? "Moving" : "Copying", count: plan.count)
+    private func runTransfer(_ plan: [(src: URL, dest: URL)], move: Bool, dir: URL, recordUndo: Bool = true) {
+        let job = TransferJob(title: move ? L("Moving") : L("Copying"), count: plan.count)
         transferJob = job
         Self.inFlight.formUnion(plan.map(\.dest.path))
         let counter = job.counter
@@ -768,7 +817,7 @@ final class ExplorerState {
             await MainActor.run {
                 Self.inFlight.subtract(plan.map(\.dest.path))
                 if let finalFailure { self.errorMessage = finalFailure }
-                self.finishTransfer(done: finalDone, move: move, dir: dir)
+                self.finishTransfer(done: finalDone, move: move, dir: dir, recordUndo: recordUndo)
                 if self.transferJob === job { self.transferJob = nil }
             }
         }
@@ -783,8 +832,8 @@ final class ExplorerState {
         }
     }
 
-    private func finishTransfer(done: [(from: URL, to: URL)], move: Bool, dir: URL) {
-        if !done.isEmpty { record(move ? .move(done) : .create(done.map(\.to))) }
+    private func finishTransfer(done: [(from: URL, to: URL)], move: Bool, dir: URL, recordUndo: Bool = true) {
+        if recordUndo, !done.isEmpty { record(move ? .move(done) : .create(done.map(\.to))) }
         reload()
         if dir.normalized == current, !done.isEmpty { selection = Set(done.map(\.to)) }
     }
@@ -901,10 +950,10 @@ final class ExplorerState {
         var name = renameText.trimmingCharacters(in: .whitespaces)
         if hidesExtension(old), !name.isEmpty { name += "." + old.pathExtension }
         guard !name.isEmpty, name != old.lastPathComponent else { return nil }
-        guard !name.contains("/") else { errorMessage = "A name can't contain “/”."; return nil }
+        guard !name.contains("/") else { errorMessage = String(localized: "A name can't contain “/”."); return nil }
         let new = old.deletingLastPathComponent().appending(path: name, directoryHint: .notDirectory).normalized
         guard !FileManager.default.fileExists(atPath: new.path) else {
-            errorMessage = "“\(name)” already exists."; return nil
+            errorMessage = String(localized: "“\(name)” already exists."); return nil
         }
         do {
             try FileManager.default.moveItem(at: old, to: new)
@@ -958,7 +1007,7 @@ final class ExplorerState {
         var pairs: [(from: URL, to: URL)] = []
         for u in (urls ?? selection).map(\.normalized) {
             guard let origPath = log[u.path] else {
-                errorMessage = "Explorer doesn't know where “\(u.lastPathComponent)” was deleted from. Use Move to folder… instead."
+                errorMessage = String(localized: "Explorer doesn't know where “\(u.lastPathComponent)” was deleted from. Use Move to folder… instead.")
                 continue
             }
             let orig = URL(filePath: origPath)
@@ -980,16 +1029,17 @@ final class ExplorerState {
     func emptyTrash() {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: Self.trashURL, includingPropertiesForKeys: nil, options: []) else {
-            errorMessage = "Explorer can't open the Trash. Allow Full Disk Access in System Settings → Privacy & Security."
+            errorMessage = String(localized: "Explorer can't open the Trash. Allow Full Disk Access in System Settings → Privacy & Security.")
             return
         }
         let visible = items.filter { $0.lastPathComponent != ".DS_Store" }
         guard !visible.isEmpty else { return }
         let a = NSAlert()
-        a.messageText = "Permanently delete \(visible.count == 1 ? "this item" : "all \(visible.count) items") in the Recycle Bin?"
-        a.informativeText = "This can't be undone."
+        a.messageText = visible.count == 1 ? String(localized: "Permanently delete this item in the Recycle Bin?")
+                                           : String(localized: "Permanently delete all \(visible.count) items in the Recycle Bin?")
+        a.informativeText = String(localized: "This can't be undone.")
         a.alertStyle = .warning
-        a.addButton(withTitle: "Empty Recycle Bin"); a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: String(localized: "Empty Recycle Bin")); a.addButton(withTitle: String(localized: "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         for u in visible { do { try fm.removeItem(at: u) } catch { errorMessage = error.localizedDescription } }
         Self.trashLog = [:]
@@ -1000,7 +1050,7 @@ final class ExplorerState {
     nonisolated static func describeLoadError(_ e: Error, _ dir: URL) -> String {
         let ns = e as NSError
         if ns.domain == NSCocoaErrorDomain && ns.code == NSFileReadNoPermissionError {
-            return "Explorer isn't allowed to open “\(dir.lastPathComponent)”. Allow it in System Settings → Privacy & Security → Full Disk Access (or Files and Folders), then reopen the folder."
+            return String(localized: "Explorer isn't allowed to open “\(dir.lastPathComponent)”. Allow it in System Settings → Privacy & Security → Full Disk Access (or Files and Folders), then reopen the folder.")
         }
         return e.localizedDescription
     }
@@ -1009,10 +1059,11 @@ final class ExplorerState {
         let targets = urls ?? selection
         guard !targets.isEmpty else { return }
         let a = NSAlert()
-        a.messageText = targets.count == 1 ? "Delete “\(targets.first!.lastPathComponent)” permanently?" : "Delete these \(targets.count) items permanently?"
-        a.informativeText = "This can't be undone."
+        a.messageText = targets.count == 1 ? String(localized: "Delete “\(targets.first!.lastPathComponent)” permanently?")
+                                           : String(localized: "Delete these \(targets.count) items permanently?")
+        a.informativeText = String(localized: "This can't be undone.")
         a.alertStyle = .warning
-        a.addButton(withTitle: "Delete"); a.addButton(withTitle: "Cancel")
+        a.addButton(withTitle: String(localized: "Delete")); a.addButton(withTitle: String(localized: "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         for u in targets { do { try FileManager.default.removeItem(at: u) } catch { errorMessage = error.localizedDescription } }
         selection = []
