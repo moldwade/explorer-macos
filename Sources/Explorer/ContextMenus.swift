@@ -12,6 +12,7 @@ struct ViewMenuItems: View {
         Divider()
         Toggle("Details pane", isOn: Binding(get: { state.showDetailsPane }, set: { state.showDetailsPane = $0 }))
         Menu("Show") {
+            Toggle("File name extensions", isOn: Binding(get: { state.showExtensions }, set: { state.showExtensions = $0 }))
             Toggle("Hidden items", isOn: Binding(get: { state.showHidden }, set: { state.showHidden = $0 }))
         }
     }

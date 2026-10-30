@@ -87,6 +87,14 @@ final class ExplorerState {
     var pinned: [URL] = (UserDefaults.standard.stringArray(forKey: "pinned") ?? []).map { URL(filePath: $0) }
     /// Files and folders the user marked as favourites (Windows 11 "Add to Favorites").
     var favorites: [URL] = (UserDefaults.standard.stringArray(forKey: "favorites") ?? []).map { URL(filePath: $0) }
+    /// Bumped to move keyboard focus into the search box (F3 / Ctrl+E).
+    var searchFocusRequest = 0
+    /// View > Show > File name extensions (Windows); on by default, as on a Mac.
+    var showExtensions = UserDefaults.standard.object(forKey: "showExtensions") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showExtensions, forKey: "showExtensions") }
+    }
+    /// The row armed by click-pause-click; renaming starts if nothing else happens first.
+    @ObservationIgnored var pendingRename: URL?
     /// When set, the list shows every file on the Mac with this Finder tag instead of a folder.
     var tagFilter: FinderTag?
     var undoStack: [UndoOp] = []
@@ -428,6 +436,7 @@ final class ExplorerState {
     }
 
     func open(_ urls: Set<URL>) {
+        pendingRename = nil
         for u in urls {
             if let item = items.first(where: { $0.url == u }) ?? FileItem(url: u) {
                 item.isFolder ? go(to: u) : { NSWorkspace.shared.open(u) }()
@@ -694,6 +703,11 @@ final class ExplorerState {
         rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown, .otherMouseDown]) { [weak self, weak window] e in
             guard let window, e.window === window else { return e }
             if e.type == .otherMouseDown {
+                // Mouse side buttons, as in Windows: 3 = Back, 4 = Forward.
+                if e.buttonNumber == 3 || e.buttonNumber == 4 {
+                    MainActor.assumeIsolated { e.buttonNumber == 3 ? self?.goBack() : self?.goForward() }
+                    return nil
+                }
                 guard e.buttonNumber == 2 else { return e }
                 let handled = MainActor.assumeIsolated { self?.middleClick(e, in: window) ?? false }
                 return handled ? nil : e
@@ -742,16 +756,39 @@ final class ExplorerState {
     }
 
     func beginRename(_ url: URL? = nil) {
+        pendingRename = nil
         guard let u = url ?? (selection.count == 1 ? selection.first : nil) else { return }
         renameTarget = u
-        renameText = u.lastPathComponent
+        renameText = hidesExtension(u) ? u.deletingPathExtension().lastPathComponent : u.lastPathComponent
+    }
+
+    /// Whether the extension of `u` is hidden in the list (and kept unchanged by rename).
+    func hidesExtension(_ u: URL) -> Bool {
+        guard !showExtensions, !u.pathExtension.isEmpty else { return false }
+        let item = item(for: u)
+        return !(item?.isFolder ?? true) && !(item?.isPackage ?? true)
+    }
+
+    func displayName(_ item: FileItem) -> String {
+        hidesExtension(item.url) ? item.url.deletingPathExtension().lastPathComponent : item.name
+    }
+
+    /// Windows "slow double-click": clicking a name that is already the only selected item renames it,
+    /// unless a double-click (open) or another click follows within the double-click time.
+    func armSlowClickRename(_ url: URL) {
+        pendingRename = url
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval + 0.1) { [weak self] in
+            guard let self, self.pendingRename == url, self.selection == [url], self.renameTarget == nil else { return }
+            self.beginRename(url)
+        }
     }
 
     @discardableResult
     func commitRename() -> URL? {
         defer { renameTarget = nil }
         guard let old = renameTarget else { return nil }
-        let name = renameText.trimmingCharacters(in: .whitespaces)
+        var name = renameText.trimmingCharacters(in: .whitespaces)
+        if hidesExtension(old), !name.isEmpty { name += "." + old.pathExtension }
         guard !name.isEmpty, name != old.lastPathComponent else { return nil }
         guard !name.contains("/") else { errorMessage = "A name can't contain “/”."; return nil }
         let new = old.deletingLastPathComponent().appending(path: name, directoryHint: .notDirectory).normalized

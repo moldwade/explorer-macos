@@ -161,6 +161,9 @@ struct ExplorerCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     private let f2 = KeyEquivalent(Character(UnicodeScalar(NSF2FunctionKey)!))
+    private let f3 = KeyEquivalent(Character(UnicodeScalar(NSF3FunctionKey)!))
+    private let f4 = KeyEquivalent(Character(UnicodeScalar(NSF4FunctionKey)!))
+    private let f5 = KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!))
     private var home: URL { FileManager.default.homeDirectoryForCurrentUser }
 
     var body: some Commands {
@@ -193,10 +196,11 @@ struct ExplorerCommands: Commands {
             Button("Rename") { ex?.beginRename() }.keyboardShortcut(f2, modifiers: [])
             Button("Move to Trash") { ex?.trash() }.keyboardShortcut(.delete, modifiers: .command)
             Button("Delete Permanently…") { ex?.deletePermanently() }.keyboardShortcut(.delete, modifiers: .shift)
+            // Windows keys: Delete (fn+⌫ on a Mac keyboard) moves to the Recycle Bin, Backspace goes back.
             Button("Delete") {
-                if textResponder() != nil { NSApp.sendAction(#selector(NSResponder.deleteBackward(_:)), to: nil, from: nil) }
+                if textResponder() != nil { NSApp.sendAction(#selector(NSResponder.deleteForward(_:)), to: nil, from: nil) }
                 else { ex?.trash() }
-            }.keyboardShortcut(.delete, modifiers: [])
+            }.keyboardShortcut(.deleteForward, modifiers: [])
         }
         CommandMenu("Go") {
             Button("Back") { ex?.goBack() }.keyboardShortcut("[")
@@ -205,6 +209,22 @@ struct ExplorerCommands: Commands {
             Button("Refresh") { ex?.reload() }.keyboardShortcut("r")
             Divider()
             Button("Address Bar") { ex?.editingPath = true }.keyboardShortcut("l")
+            Button("Search") { ex?.searchFocusRequest += 1 }.keyboardShortcut("e", modifiers: .control)
+            Divider()
+            // Windows Explorer keys.
+            Section("Windows keys") {
+                Button("Back (Backspace)") {
+                    if textResponder() != nil { NSApp.sendAction(#selector(NSResponder.deleteBackward(_:)), to: nil, from: nil) }
+                    else { ex?.goBack() }
+                }.keyboardShortcut(.delete, modifiers: [])
+                Button("Back (Alt+←)") { ex?.goBack() }.keyboardShortcut(.leftArrow, modifiers: .option)
+                Button("Forward (Alt+→)") { ex?.goForward() }.keyboardShortcut(.rightArrow, modifiers: .option)
+                Button("Up (Alt+↑)") { ex?.goUp() }.keyboardShortcut(.upArrow, modifiers: .option)
+                Button("Refresh (F5)") { ex?.reload() }.keyboardShortcut(f5, modifiers: [])
+                Button("Address Bar (F4)") { ex?.editingPath = true }.keyboardShortcut(f4, modifiers: [])
+                Button("Address Bar (Alt+D)") { ex?.editingPath = true }.keyboardShortcut("d", modifiers: .option)
+                Button("Search (F3)") { ex?.searchFocusRequest += 1 }.keyboardShortcut(f3, modifiers: [])
+            }
             Button("Home") { ex?.go(to: home) }.keyboardShortcut("h", modifiers: [.command, .shift])
         }
         CommandGroup(after: .toolbar) {

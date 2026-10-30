@@ -101,7 +101,11 @@ struct RowGestures: ViewModifier {
             content
                 .onTapGesture {
                     let m = clickModifiers()
+                    let wasOnlySelection = state.selection == [item.url]
+                    let single = (NSApp.currentEvent?.clickCount ?? 1) < 2
                     state.click(item, shift: m.shift, toggle: m.toggle)
+                    if single, wasOnlySelection, !m.shift, !m.toggle { state.armSlowClickRename(item.url) }
+                    else { state.pendingRename = nil }
                 }
                 .simultaneousGesture(TapGesture(count: 2).onEnded { state.open([item.url]) })
                 .gesture(DragGesture(minimumDistance: 4).onChanged { _ in
@@ -318,7 +322,7 @@ private struct DetailRow: View {
             HStack(spacing: 8) {
                 ItemIcon(item: item, size: 18)
                 if renaming { RenameField(state: state) }
-                else { Text(item.name).lineLimit(1); TagDots(tags: item.tags) }
+                else { Text(state.displayName(item)).lineLimit(1); TagDots(tags: item.tags) }
             }
             .padding(.horizontal, 8).frame(width: state.nameW + 1, alignment: .leading)
             Text(item.modified.formatted(date: .numeric, time: .shortened))
@@ -405,7 +409,7 @@ struct IconsGrid: View {
                 if horizontal {
                     HStack(spacing: 6) {
                         ItemIcon(item: item, size: 16)
-                        if renaming { RenameField(state: state) } else { Text(item.name).lineLimit(1); TagDots(tags: item.tags) }
+                        if renaming { RenameField(state: state) } else { Text(state.displayName(item)).lineLimit(1); TagDots(tags: item.tags) }
                         Spacer(minLength: 0)
                     }.padding(.horizontal, 6).frame(height: 24)
                 } else {
@@ -413,7 +417,7 @@ struct IconsGrid: View {
                         ThumbIcon(item: item, size: mode.iconSize)
                         if renaming { RenameField(state: state, alignment: .center) }
                         else {
-                            Text(item.name).lineLimit(2).multilineTextAlignment(.center)
+                            Text(state.displayName(item)).lineLimit(2).multilineTextAlignment(.center)
                             TagDots(tags: item.tags)
                         }
                     }.padding(6).frame(maxWidth: .infinity)

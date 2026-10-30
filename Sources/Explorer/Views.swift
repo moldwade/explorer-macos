@@ -11,6 +11,7 @@ struct WindowSpec: Codable, Hashable {
 
 struct ContentView: View {
     @State private var state: ExplorerState
+    @FocusState private var searchFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     init(start: URL) {
@@ -55,6 +56,8 @@ struct ContentView: View {
             }
         }
         .searchable(text: $state.searchText, placement: .toolbar, prompt: "Search \(state.title)")
+        .searchFocused($searchFocused)
+        .onChange(of: state.searchFocusRequest) { searchFocused = true }
         .onChange(of: state.searchText) { state.search() }
         .onChange(of: state.showHidden) { state.search() }
         .focusedSceneValue(\.explorer, state)

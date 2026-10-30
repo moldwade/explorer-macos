@@ -60,11 +60,14 @@ If you're a Windows person stuck on a Mac (or just tired of Finder), this is for
 | Action | Shortcut |
 |---|---|
 | Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
-| Rename | F2 |
-| Move to Trash / Delete permanently | ⌘⌫ or ⌫ / ⇧⌫ |
+| Rename | F2, or click a selected name again |
+| Move to Trash / Delete permanently | ⌘⌫ or Delete (fn+⌫) / ⇧⌫ |
 | New folder / New window / New tab | ⇧⌘N / ⌘N / ⌘T |
 | Back / Forward / Up / Refresh | ⌘[ / ⌘] / ⌘↑ / ⌘R |
-| Address bar | ⌘L |
+| Windows keys: Back / Forward / Up / Refresh | ⌫ or ⌥← or mouse button 4 / ⌥→ or mouse button 5 / ⌥↑ / F5 |
+| Address bar | ⌘L, F4 or ⌥D |
+| Search box | F3 or ⌃E |
+| Open folder in new tab / close tab | Middle-click folder / middle-click tab |
 | Properties | ⌥↩ |
 | Details pane | ⌥⇧P |
 | Hidden items | ⇧⌘. |
