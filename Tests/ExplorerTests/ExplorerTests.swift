@@ -181,6 +181,12 @@ final class ExplorerTests: XCTestCase {
         XCTAssertEqual(s.current, target)
     }
 
+    func testSearchIgnoresAccentsAndTurkishI() {
+        XCTAssertTrue(ExplorerState.nameMatches("Čačak faktura.pdf", "cacak"))
+        XCTAssertTrue(ExplorerState.nameMatches("İstanbul.xlsx", "istanbul"))
+        XCTAssertFalse(ExplorerState.nameMatches("report.pdf", "invoice"))
+    }
+
     func testCannotMoveFolderIntoItself() async throws {
         let sub = dir.appending(path: "sub").normalized
         try fm.createDirectory(at: sub, withIntermediateDirectories: false)

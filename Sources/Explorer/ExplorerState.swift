@@ -125,6 +125,7 @@ final class ExplorerState {
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var source: DispatchSourceFileSystemObject?
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var searchCancel: CancelFlag?
 
     static let nameSort = KeyPathComparator(\FileItem.name, comparator: .localizedStandard)
 
@@ -202,7 +203,10 @@ final class ExplorerState {
             return buckets.keys.sorted { newest ? rank[$0]! < rank[$1]! : rank[$0]! > rank[$1]! }
                 .map { ($0, buckets[$0]!.sorted(by: byTime)) }
         }
-        return buckets.keys.sorted { (rank[$0]!, $0) < (rank[$1]!, $1) }.map { ($0, buckets[$0]!) }
+        // Letters in alphabet order (Č, Š, Ž next to C, S, Z), not by raw code point.
+        return buckets.keys.sorted {
+            rank[$0]! != rank[$1]! ? rank[$0]! < rank[$1]! : $0.localizedStandardCompare($1) == .orderedAscending
+        }.map { ($0, buckets[$0]!) }
     }
 
     private func groupInfo(_ i: FileItem) -> (String, Int) {
@@ -275,8 +279,10 @@ final class ExplorerState {
     func typeSelect(_ chars: String) {
         if Date().timeIntervalSince(typeTime) > 1 { typeBuffer = "" }
         typeTime = Date()
-        typeBuffer += chars.lowercased()
-        if let m = displayed.first(where: { $0.name.lowercased().hasPrefix(typeBuffer) }) {
+        typeBuffer += chars
+        let fold = { (t: String) in t.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "tr")) }
+        let typed = fold(typeBuffer)
+        if let m = displayed.first(where: { fold($0.name).hasPrefix(typed) }) {
             selection = [m.url]; anchor = m.url; cursor = m.url
         }
     }
@@ -502,26 +508,66 @@ final class ExplorerState {
         let root = current
         let hidden = showHidden
         isSearching = true
+        searchCancel?.cancelled = true
+        let flag = CancelFlag()
+        searchCancel = flag
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             if Task.isCancelled { return }
-            let found = await Task.detached { Self.scan(root, matching: q, hidden: hidden) }.value
-            if Task.isCancelled { return }
-            self?.searchResults = found
+            // Names anywhere below this folder, plus Spotlight's content matches (text inside PDFs,
+            // Word, Excel…) for indexed locations.
+            async let byName = Task.detached { Self.scan(root, matching: q, hidden: hidden, cancel: flag) }.value
+            async let byContent = Task.detached { Self.spotlight(root, matching: q, hidden: hidden, cancel: flag) }.value
+            let names = await byName, contents = await byContent
+            if Task.isCancelled || flag.cancelled { return }
+            var seen = Set(names.map(\.url))
+            self?.searchResults = names + contents.filter { seen.insert($0.url).inserted }
             self?.isSearching = false
         }
     }
 
-    nonisolated static func scan(_ root: URL, matching q: String, hidden: Bool) -> [FileItem] {
+    /// Set when a newer search starts; the background scans stop at their next step.
+    final class CancelFlag: @unchecked Sendable { var cancelled = false }
+
+    /// Case- and accent-insensitive, so "cacak" finds "Čačak" and "istanbul" finds "İstanbul".
+    nonisolated static func nameMatches(_ name: String, _ q: String) -> Bool {
+        name.range(of: q, options: [.caseInsensitive, .diacriticInsensitive], locale: .current) != nil
+            || name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "tr"))
+                .contains(q.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "tr")))
+    }
+
+    nonisolated static func scan(_ root: URL, matching q: String, hidden: Bool, cancel: CancelFlag = CancelFlag()) -> [FileItem] {
         var out: [FileItem] = []
-        let opts: FileManager.DirectoryEnumerationOptions = hidden ? [] : [.skipsHiddenFiles]
+        var opts: FileManager.DirectoryEnumerationOptions = [.skipsPackageDescendants]
+        if !hidden { opts.insert(.skipsHiddenFiles) }
         guard let en = FileManager.default.enumerator(
             at: root, includingPropertiesForKeys: FileItem.keys, options: opts) else { return [] }
         for case let u as URL in en {
-            if Task.isCancelled || out.count >= 5000 { break }
-            if u.lastPathComponent.localizedCaseInsensitiveContains(q), let i = FileItem(url: u) { out.append(i) }
+            if cancel.cancelled || out.count >= 5000 { break }
+            if nameMatches(u.lastPathComponent, q), let i = FileItem(url: u) { out.append(i) }
         }
         return out
+    }
+
+    /// Spotlight full-text search limited to `root` (only finds what Spotlight has indexed).
+    nonisolated static func spotlight(_ root: URL, matching q: String, hidden: Bool, cancel: CancelFlag) -> [FileItem] {
+        let p = Process()
+        p.executableURL = URL(filePath: "/usr/bin/mdfind")
+        p.arguments = ["-onlyin", root.path, q]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        if cancel.cancelled { return [] }
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").prefix(2000).compactMap { line in
+            let path = String(line)
+            // Skip hidden files and anything inside app bundles or other packages.
+            if !hidden && path.contains("/.") { return nil }
+            if path.range(of: #"\.(app|bundle|framework|photoslibrary)/"#, options: .regularExpression) != nil { return nil }
+            return FileItem(url: URL(filePath: path))
+        }
     }
 
     // MARK: Clipboard
