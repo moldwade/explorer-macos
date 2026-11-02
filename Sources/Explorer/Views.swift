@@ -285,6 +285,7 @@ struct AddressBar: View {
                     .onSubmit { state.goToPath(state.pathText) }
                     .onExitCommand { state.editingPath = false }
                     .onChange(of: focused) { if !focused { state.editingPath = false } }
+                    .onAppear { if state.pathText.isEmpty { state.pathText = state.current.path } }
                     .padding(.horizontal, 8)
             } else {
                 ScrollViewReader { proxy in
@@ -313,7 +314,22 @@ struct AddressBar: View {
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 5).fill(Theme.background))
         .overlay(RoundedRectangle(cornerRadius: 5).stroke(state.editingPath ? Theme.accent : Theme.divider, lineWidth: state.editingPath ? 1.5 : 1))
-        .onChange(of: state.editingPath) { if state.editingPath { state.pathText = state.current.path; focused = true } }
+        .onChange(of: state.editingPath) {
+            guard state.editingPath else { return }
+            state.pathText = state.current.path
+            focused = true
+            // Select the whole path, as Explorer does, so ⌘C copies it right away.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                (NSApp.keyWindow?.firstResponder as? NSTextView)?.selectAll(nil)
+            }
+        }
+        .contextMenu {
+            Button("Copy address") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(state.current.path, forType: .string)
+            }
+            Button("Edit address") { state.editingPath = true }
+        }
     }
 }
 

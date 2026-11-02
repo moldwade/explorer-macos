@@ -232,3 +232,5 @@
 "Disconnect" = "Prekini vezu";
 "Remove from navigation pane" = "Ukloni iz navigacijskog okna";
 "Couldn't connect to “%@” (error %d)." = "Povezivanje sa “%@” nije uspjelo (greška %d).";
+"Copy address" = "Kopiraj adresu";
+"Edit address" = "Uredi adresu";

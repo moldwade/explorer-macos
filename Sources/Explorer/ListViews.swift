@@ -14,8 +14,13 @@ struct ListKeys: ViewModifier {
             .focused($focused)
             .focusEffectDisabled()
             // Not while renaming: taking focus back would end the rename the moment you click in the field.
-            .simultaneousGesture(TapGesture().onEnded { if state.renameTarget == nil { focused = true } })
+            .simultaneousGesture(TapGesture().onEnded {
+                state.editingPath = false
+                if state.renameTarget == nil { focused = true }
+            })
             .onAppear { focused = true }
+            // Clicking into the list (or anything that gives it focus) ends address editing, like Explorer.
+            .onChange(of: focused) { if focused { state.editingPath = false } }
             .onChange(of: state.current) { focused = true }
             .onChange(of: state.renameTarget) { if state.renameTarget == nil { focused = true } }
             .onKeyPress(phases: [.down, .repeat]) { p in
@@ -213,7 +218,7 @@ struct MarqueeLayer: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.clear.contentShape(Rectangle())
-                .onTapGesture { state.selectNone() }
+                .onTapGesture { state.editingPath = false; state.selectNone() }
                 .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("content"))
                     .onChanged { v in
                         let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
