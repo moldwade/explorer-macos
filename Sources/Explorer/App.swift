@@ -208,6 +208,10 @@ struct ExplorerCommands: Commands {
                 if textResponder() != nil { NSApp.sendAction(#selector(NSResponder.deleteForward(_:)), to: nil, from: nil) }
                 else { ex?.trash() }
             }.keyboardShortcut(.deleteForward, modifiers: [])
+            Button("Delete Permanently (Shift+Delete)…") {
+                if textResponder() != nil { NSApp.sendAction(#selector(NSResponder.deleteForward(_:)), to: nil, from: nil) }
+                else { ex?.deletePermanently() }
+            }.keyboardShortcut(.deleteForward, modifiers: .shift)
         }
         CommandMenu("Go") {
             Button("Back") { ex?.goBack() }.keyboardShortcut("[")

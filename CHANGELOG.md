@@ -12,7 +12,7 @@ All notable changes are documented here. The project follows [Semantic Versionin
 - Finder colour tags shown next to names and editable from the context menu
 - PDF tools (merge, split, rotate) and image tools (resize for email, convert, to PDF)
 - Spotlight full-text search; accent- and Turkish-İ-insensitive name search
-- Windows keys: Backspace/Alt+arrows/mouse buttons 4–5 navigate, F3/F4/F5, Alt+D, Ctrl+E; Delete key trashes
+- Windows keys: Backspace/Alt+arrows/mouse buttons 4–5 navigate, F3/F4/F5, Alt+D, Ctrl+E; Delete key trashes, Shift+Delete deletes permanently; Delete inside the Recycle Bin deletes permanently (with confirmation)
 - View › Show › File name extensions; click-pause-click to rename
 - Grouped by date: items ordered by full date and time
 - ⌘K "Go to folder" palette with recent folders, favourites and Spotlight folder search

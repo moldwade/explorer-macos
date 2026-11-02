@@ -965,8 +965,13 @@ final class ExplorerState {
     }
 
     func trash(_ urls: Set<URL>? = nil) {
+        // Items already in the Recycle Bin can't go there again: like Windows, Delete removes them for good.
+        let all = urls ?? selection
+        let trashPath = Self.trashURL.path + "/"
+        let inBin = all.filter { $0.normalized.path.hasPrefix(trashPath) }
+        if !inBin.isEmpty { deletePermanently(inBin) }
         var rec: [(orig: URL, trashed: URL)] = []
-        for u in urls ?? selection {
+        for u in all.subtracting(inBin) {
             var out: NSURL?
             do {
                 try FileManager.default.trashItem(at: u, resultingItemURL: &out)
@@ -1065,7 +1070,12 @@ final class ExplorerState {
         a.alertStyle = .warning
         a.addButton(withTitle: String(localized: "Delete")); a.addButton(withTitle: String(localized: "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
-        for u in targets { do { try FileManager.default.removeItem(at: u) } catch { errorMessage = error.localizedDescription } }
+        var log = Self.trashLog
+        for u in targets {
+            do { try FileManager.default.removeItem(at: u); log[u.normalized.path] = nil }
+            catch { errorMessage = error.localizedDescription }
+        }
+        Self.trashLog = log
         selection = []
         reload()
     }

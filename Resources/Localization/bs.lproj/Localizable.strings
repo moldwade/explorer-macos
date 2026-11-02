@@ -227,3 +227,4 @@
 "Installed ‘explorermac’" = "‘explorermac’ je instaliran";
 "Copied to %@.\n\nTry it in Terminal:\n\nexplorermac /Users" = "Kopirano u %@.\n\nIsprobajte u Terminalu:\n\nexplorermac /Users";
 "Couldn't install" = "Instalacija nije uspjela";
+"Delete Permanently (Shift+Delete)…" = "Trajno izbriši (Shift+Delete)…";

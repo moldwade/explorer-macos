@@ -70,7 +70,7 @@ If you're a Windows person stuck on a Mac (or just tired of Finder), this is for
 |---|---|
 | Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
 | Rename | F2, or click a selected name again |
-| Move to Trash / Delete permanently | ⌘⌫ or Delete (fn+⌫) / ⇧⌫ |
+| Move to Trash / Delete permanently | ⌘⌫ or Delete (fn+⌫) / ⇧⌫ or Shift+Delete · in the Recycle Bin, Delete removes for good |
 | New folder / New window / New tab | ⇧⌘N / ⌘N / ⌘T |
 | Back / Forward / Up / Refresh | ⌘[ / ⌘] / ⌘↑ / ⌘R |
 | Windows keys: Back / Forward / Up / Refresh | ⌫ or ⌥← or mouse button 4 / ⌥→ or mouse button 5 / ⌥↑ / F5 |

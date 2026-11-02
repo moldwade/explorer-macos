@@ -227,3 +227,4 @@
 "Installed ‘explorermac’" = "‘explorermac’ yüklendi";
 "Copied to %@.\n\nTry it in Terminal:\n\nexplorermac /Users" = "%@ konumuna kopyalandı.\n\nTerminal'de deneyin:\n\nexplorermac /Users";
 "Couldn't install" = "Yüklenemedi";
+"Delete Permanently (Shift+Delete)…" = "Kalıcı Olarak Sil (Shift+Delete)…";
