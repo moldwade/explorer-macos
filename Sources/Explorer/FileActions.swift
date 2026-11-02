@@ -1,4 +1,5 @@
 import AppKit
+import NetFS
 import UniformTypeIdentifiers
 
 extension ExplorerState {
@@ -156,20 +157,111 @@ extension ExplorerState {
         return vols.filter { isRemote($0) }
     }
 
+    static let serverSchemes: Set<String> = ["smb", "nfs", "afp", "ftp", "http", "https", "webdav"]
+
     func connectToServer() {
         let a = NSAlert()
         a.messageText = String(localized: "Connect to server")
         a.informativeText = String(localized: "Enter a server address, for example smb://server/share or nfs://host/path.")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        let field = NSTextField(frame: NSRect(x: 0, y: 28, width: 300, height: 24))
         field.placeholderString = "smb://server/share"
-        a.accessoryView = field
+        let save = NSButton(checkboxWithTitle: String(localized: "Show in the navigation pane"), target: nil, action: nil)
+        save.state = .on
+        save.frame = NSRect(x: 0, y: 0, width: 300, height: 20)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 52))
+        box.addSubview(field); box.addSubview(save)
+        a.accessoryView = box
+        a.window.initialFirstResponder = field
         a.addButton(withTitle: String(localized: "Connect")); a.addButton(withTitle: String(localized: "Cancel"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
-        let text = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard let url = URL(string: text), let scheme = url.scheme, ["smb", "nfs", "afp", "ftp", "http", "https", "vnc"].contains(scheme.lowercased()) else {
+        var text = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !text.contains("://") { text = "smb://" + text }   // "192.168.1.10/share" means SMB, like Finder
+        guard let url = URL(string: text), let scheme = url.scheme, Self.serverSchemes.contains(scheme.lowercased()),
+              url.host() != nil else {
             errorMessage = String(localized: "“\(text)” isn't a valid server address."); return
         }
-        NSWorkspace.shared.open(url)   // macOS mounts the share; it then appears under Network
+        if save.state == .on { saveServer(url) }
+        openServer(url)
+    }
+
+    func isSaved(server url: URL) -> Bool { servers.contains { Self.sameServer($0, url) } }
+
+    func saveServer(_ url: URL) {
+        guard !isSaved(server: url) else { return }
+        servers.append(Self.withoutPassword(url))
+        UserDefaults.standard.set(servers.map(\.absoluteString), forKey: "savedServers")
+    }
+
+    func forgetServer(_ url: URL) {
+        servers.removeAll { Self.sameServer($0, url) }
+        UserDefaults.standard.set(servers.map(\.absoluteString), forKey: "savedServers")
+    }
+
+    /// Passwords belong in the keychain (macOS offers "Remember this password"), never in our settings.
+    static func withoutPassword(_ url: URL) -> URL {
+        guard var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        c.password = nil
+        return c.url ?? url
+    }
+
+    /// Same host and share, ignoring user name, case and trailing slashes.
+    nonisolated static func sameServer(_ a: URL, _ b: URL) -> Bool {
+        func key(_ u: URL) -> String {
+            let path = u.path().removingPercentEncoding ?? u.path()
+            return (u.scheme ?? "").lowercased() + "://" + (u.host() ?? "").lowercased() + "/"
+                + path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        }
+        return key(a) == key(b)
+    }
+
+    /// Where a saved server is mounted right now, if it is.
+    func mountPoint(of server: URL) -> URL? {
+        networkVolumes.first { v in
+            guard let remote = (try? v.resourceValues(forKeys: [.volumeURLForRemountingKey]))?.volumeURLForRemounting else { return false }
+            return Self.sameServer(remote, server)
+        }
+    }
+
+    /// Mounted shares that aren't saved servers (those are listed under their saved entry).
+    var unsavedNetworkVolumes: [URL] {
+        networkVolumes.filter { v in
+            guard let remote = (try? v.resourceValues(forKeys: [.volumeURLForRemountingKey]))?.volumeURLForRemounting else { return true }
+            return !isSaved(server: remote)
+        }
+    }
+
+    func remoteURL(of volume: URL) -> URL? {
+        (try? volume.resourceValues(forKeys: [.volumeURLForRemountingKey]))?.volumeURLForRemounting
+    }
+
+    /// Opens a server: goes straight there if it's mounted, otherwise mounts it (macOS asks for the
+    /// password and can keep it in the keychain) and then opens it here, not in Finder.
+    func openServer(_ url: URL) {
+        if let mp = mountPoint(of: url) { go(to: mp.normalized); return }
+        connecting = url
+        let open = NSMutableDictionary()
+        open[kNAUIOptionKey] = kNAUIOptionAllowUI
+        var request: AsyncRequestID?
+        let status = NetFSMountURLAsync(url as CFURL, nil, nil, nil, open, nil, &request, .main) { [weak self] status, _, mounts in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.connecting = nil
+                let points = (mounts as? [String]) ?? []
+                if let first = points.first {
+                    self.go(to: URL(filePath: first).normalized)
+                } else if let mp = self.mountPoint(of: url) {
+                    self.go(to: mp.normalized)      // already mounted (EEXIST)
+                } else if status != 0 && status != Int32(ECANCELED) && status != Int32(userCanceledErr) {
+                    self.errorMessage = String(localized: "Couldn't connect to “\(url.host() ?? url.absoluteString)” (error \(status)).")
+                }
+            }
+        }
+        if status != 0 { connecting = nil; errorMessage = String(localized: "Couldn't connect to “\(url.host() ?? url.absoluteString)” (error \(status)).") }
+    }
+
+    func disconnect(_ volume: URL) {
+        do { try NSWorkspace.shared.unmountAndEjectDevice(at: volume) } catch { errorMessage = error.localizedDescription }
+        if current.path.hasPrefix(volume.normalized.path) { go(to: FileManager.default.homeDirectoryForCurrentUser.normalized) }
     }
 
     // MARK: Misc

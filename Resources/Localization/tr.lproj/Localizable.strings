@@ -228,3 +228,7 @@
 "Copied to %@.\n\nTry it in Terminal:\n\nexplorermac /Users" = "%@ konumuna kopyalandı.\n\nTerminal'de deneyin:\n\nexplorermac /Users";
 "Couldn't install" = "Yüklenemedi";
 "Delete Permanently (Shift+Delete)…" = "Kalıcı Olarak Sil (Shift+Delete)…";
+"Show in the navigation pane" = "Gezinti bölmesinde göster";
+"Disconnect" = "Bağlantıyı kes";
+"Remove from navigation pane" = "Gezinti bölmesinden kaldır";
+"Couldn't connect to “%@” (error %d)." = "“%@” sunucusuna bağlanılamadı (hata %d).";

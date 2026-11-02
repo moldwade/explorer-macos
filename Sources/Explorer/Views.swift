@@ -129,6 +129,13 @@ struct SidebarView: View {
         return r
     }
 
+    /// "share (host)" for a saved server, or just the host when no share is given.
+    static func serverTitle(_ u: URL) -> String {
+        let share = (u.path().removingPercentEncoding ?? u.path()).split(separator: "/").last.map(String.init)
+        let host = u.host() ?? u.absoluteString
+        return share.map { "\($0) (\(host))" } ?? host
+    }
+
     static func tagURL(_ t: FinderTag) -> URL { URL(string: "explorer-tag://\(t.color)")! }
 
     var body: some View {
@@ -140,15 +147,17 @@ struct SidebarView: View {
                 if let tag = FinderTag.standard.first(where: { Self.tagURL($0) == u }) { state.showTag(tag) }
             } else if let f = SmartFolder.all.first(where: { $0.url == u }) {
                 state.showSmartFolder(f)
+            } else if !u.isFileURL {
+                state.openServer(u)
             } else {
                 state.go(to: u)  // a favourite file opens in its app
             }
         })) {
             Section {
                 Label { Text("Home") } icon: { Image(systemName: "house.fill").foregroundStyle(Theme.accent) }
-                    .tag(Self.home.normalized)
+                    .sidebarItem(Self.home.normalized, state)
                 Label { Text("Recycle Bin") } icon: { Image(systemName: "trash.fill").foregroundStyle(.secondary) }
-                    .tag(ExplorerState.trashURL)
+                    .sidebarItem(ExplorerState.trashURL, state)
                     .dropDestination(for: URL.self) { urls, _ in state.trash(Set(urls)); return true }
                     .contextMenu { Button("Empty Recycle Bin…") { state.emptyTrash() } }
             }
@@ -161,7 +170,7 @@ struct SidebarView: View {
                         }
                         .opacity(exists ? 1 : 0.45)
                         .help(url.path)
-                        .tag(url)
+                        .sidebarItem(url, state)
                         .contextMenu {
                             Button("Open file location") { state.revealInList(url) }
                             Button("Remove from Favorites") { state.toggleFavorite([url]) }
@@ -172,12 +181,12 @@ struct SidebarView: View {
             Section("Quick access") {
                 ForEach(defaults, id: \.url) { q in
                     Label { Text(L(q.title)) } icon: { Image(systemName: q.icon).foregroundStyle(q.color) }
-                        .tag(q.url)
+                        .sidebarItem(q.url, state)
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: q.url); return true }
                 }
                 ForEach(state.pinned.filter { p in !defaults.contains { $0.url == p } }, id: \.self) { url in
                     Label { Text(url.lastPathComponent) } icon: { Image(systemName: "folder.fill").foregroundStyle(Theme.folder) }
-                        .tag(url)
+                        .sidebarItem(url, state)
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: url); return true }
                         .contextMenu { Button("Unpin from Quick access") { state.togglePin(url) } }
                 }
@@ -197,12 +206,32 @@ struct SidebarView: View {
                 }
             }
             Section("Network") {
-                ForEach(state.networkVolumes, id: \.self) { v in
+                ForEach(state.servers, id: \.self) { server in
+                    let mp = state.mountPoint(of: server)
+                    Label { Text(Self.serverTitle(server)) } icon: {
+                        if state.connecting == server { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
+                        else { Image(systemName: "server.rack").foregroundStyle(mp != nil ? Theme.accent : .secondary) }
+                    }
+                    .help(server.absoluteString)
+                    .sidebarItem(mp?.normalized ?? server, state)
+                    .contextMenu {
+                        Button(mp == nil ? "Connect" : "Open") { state.openServer(server) }
+                        if let mp { Button("Disconnect") { state.disconnect(mp) } }
+                        Divider()
+                        Button("Remove from navigation pane") { state.forgetServer(server) }
+                    }
+                }
+                ForEach(state.unsavedNetworkVolumes, id: \.self) { v in
                     Label { Text(FileManager.default.displayName(atPath: v.path)) } icon: {
                         Image(systemName: "network").foregroundStyle(Theme.accent)
                     }
-                    .tag(v.normalized)
-                    .contextMenu { Button("Eject") { try? NSWorkspace.shared.unmountAndEjectDevice(at: v) } }
+                    .sidebarItem(v.normalized, state)
+                    .contextMenu {
+                        if let remote = state.remoteURL(of: v) {
+                            Button("Show in the navigation pane") { state.saveServer(remote) }
+                        }
+                        Button("Disconnect") { state.disconnect(v) }
+                    }
                 }
                 Button { state.connectToServer() } label: {
                     Label { Text("Connect to server…") } icon: { Image(systemName: "externaldrive.badge.plus").foregroundStyle(.secondary) }
@@ -218,7 +247,7 @@ struct SidebarView: View {
                         }
                         Text(node.title).lineLimit(1)
                     }
-                    .tag(node.url)
+                    .sidebarItem(node.url, state)
                     .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: node.url); return true }
                 }
             }
@@ -226,6 +255,17 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .background(Theme.pane)
+    }
+}
+
+extension View {
+    /// A navigation-pane row: selectable by `url`, and remembered while hovered so a middle click
+    /// can open it in a new tab.
+    func sidebarItem(_ url: URL, _ state: ExplorerState) -> some View {
+        onHover { inside in
+            if inside { state.sidebarHover = url } else if state.sidebarHover == url { state.sidebarHover = nil }
+        }
+        .tag(url)
     }
 }
 
@@ -238,6 +278,7 @@ struct AddressBar: View {
     var body: some View {
         HStack(spacing: 0) {
             Image(systemName: "folder.fill").foregroundStyle(Theme.folder).padding(.leading, 8)
+                .contentShape(Rectangle()).onTapGesture { state.editingPath = true }
             if state.editingPath {
                 TextField("Path", text: $state.pathText)
                     .textFieldStyle(.plain).focused($focused)
@@ -261,7 +302,10 @@ struct AddressBar: View {
                     .onAppear { proxy.scrollTo(state.breadcrumbs.count - 1, anchor: .trailing) }
                     .onChange(of: state.current) { proxy.scrollTo(state.breadcrumbs.count - 1, anchor: .trailing) }
                 }
-                Spacer(minLength: 0)
+                // Only the empty part of the bar switches to typing; the crumbs stay clickable.
+                Color.clear.frame(maxWidth: .infinity).frame(minWidth: 0)
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.editingPath = true }
             }
             Button { state.reload() } label: { Image(systemName: "arrow.clockwise").font(.system(size: 11)) }
                 .buttonStyle(.borderless).padding(.trailing, 8).help("Refresh (⌘R)")
@@ -269,8 +313,6 @@ struct AddressBar: View {
         .frame(height: 26)
         .background(RoundedRectangle(cornerRadius: 5).fill(Theme.background))
         .overlay(RoundedRectangle(cornerRadius: 5).stroke(state.editingPath ? Theme.accent : Theme.divider, lineWidth: state.editingPath ? 1.5 : 1))
-        .contentShape(Rectangle())
-        .onTapGesture { state.editingPath = true }
         .onChange(of: state.editingPath) { if state.editingPath { state.pathText = state.current.path; focused = true } }
     }
 }

@@ -41,7 +41,7 @@ If you're a Windows person stuck on a Mac (or just tired of Finder), this is for
 - Group by Name / Date modified / Type / Size, Details pane with thumbnail, status bar
 - Real thumbnails for images, videos and PDFs in the icon views
 - Drag-box (rubber-band) selection, right-click selects the item under the cursor, breadcrumb dropdowns for sub-folders
-- Network section (mounted shares + *Connect to server…*), live volume list
+- Network section: saved servers (stay listed while disconnected; click to connect), mounted shares, *Connect to server…*
 - Windows 11 colours in light and dark mode, inline rename, native macOS tabs (⌘T)
 
 **Right-click menus** (modelled on Windows 11)

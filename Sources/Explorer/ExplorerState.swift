@@ -87,6 +87,10 @@ final class ExplorerState {
     var pinned: [URL] = (UserDefaults.standard.stringArray(forKey: "pinned") ?? []).map { URL(filePath: $0) }
     /// Files and folders the user marked as favourites (Windows 11 "Add to Favorites").
     var favorites: [URL] = (UserDefaults.standard.stringArray(forKey: "favorites") ?? []).map { URL(filePath: $0) }
+    /// Servers saved in the navigation pane (smb://…), listed even while they aren't connected.
+    var servers: [URL] = (UserDefaults.standard.stringArray(forKey: "savedServers") ?? []).compactMap { URL(string: $0) }
+    /// The server being mounted right now (its sidebar row shows a spinner).
+    var connecting: URL?
     /// The ⌘K "Go to folder" palette.
     var showPalette = false
     /// Bumped to move keyboard focus into the search box (F3 / Ctrl+E).
@@ -115,6 +119,8 @@ final class ExplorerState {
     var marquee: CGRect?
     var volumesVersion = 0
     @ObservationIgnored var hoverURL: URL?
+    /// The navigation-pane row under the mouse (for middle click).
+    @ObservationIgnored var sidebarHover: URL?
     /// Opens a folder in a new tab of this window; set by the view, which owns `openWindow`.
     @ObservationIgnored var openInNewTab: ((URL) -> Void)?
     @ObservationIgnored var rowFrames: [URL: CGRect] = [:]
@@ -882,6 +888,12 @@ final class ExplorerState {
     private func middleClick(_ e: NSEvent, in window: NSWindow) -> Bool {
         if let tab = WindowTabs.tab(at: e.locationInWindow, in: window) {
             tab.performClose(nil)
+            return true
+        }
+        if let u = sidebarHover, let open = openInNewTab {
+            var dir: ObjCBool = false
+            guard u.isFileURL, FileManager.default.fileExists(atPath: u.path, isDirectory: &dir), dir.boolValue else { return false }
+            open(u)
             return true
         }
         if let u = hoverURL, let item = item(for: u), item.isFolder, let open = openInNewTab {

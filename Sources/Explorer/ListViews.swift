@@ -147,11 +147,44 @@ enum FileDrag {
     static var active = false
 
     private final class Source: NSObject, NSDraggingSource {
+        var urls: [URL] = []
+        weak var window: NSWindow?
+        private var hoverTab: NSWindow?
+
         func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
             context == .outsideApplication ? [.copy, .link, .generic] : [.copy, .move, .generic]
         }
+
+        /// Like Finder: hovering over another tab while dragging switches to it, so the drop can go there.
+        func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+            MainActor.assumeIsolated {
+                let tab = tabUnder(screenPoint)
+                guard tab !== hoverTab else { return }
+                hoverTab = tab
+                guard let tab, tab.tabGroup?.selectedWindow !== tab else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.hoverTab === tab, FileDrag.active else { return }
+                        tab.tabGroup?.selectedWindow = tab
+                    }
+                }
+            }
+        }
+
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-            MainActor.assumeIsolated { FileDrag.active = false }
+            MainActor.assumeIsolated {
+                FileDrag.active = false
+                // Dropped right on a tab: put the items in that tab's folder.
+                if operation == [], let tab = tabUnder(screenPoint), let state = WindowTabs.state(for: tab) {
+                    state.drop(urls, into: state.current)
+                }
+                hoverTab = nil
+            }
+        }
+
+        @MainActor private func tabUnder(_ screenPoint: NSPoint) -> NSWindow? {
+            guard let w = window?.tabGroup?.selectedWindow ?? window, w.frame.contains(screenPoint) else { return nil }
+            return WindowTabs.tab(at: w.convertPoint(fromScreen: screenPoint), in: w)
         }
     }
     private static let source = Source()
@@ -167,6 +200,8 @@ enum FileDrag {
             return item
         }
         active = true
+        source.urls = urls
+        source.window = event.window
         view.beginDraggingSession(with: items, event: event, source: source)
     }
 }

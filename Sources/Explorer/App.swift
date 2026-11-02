@@ -20,6 +20,8 @@ enum WindowTabs {
         registry.append((s, w))
     }
 
+    static func state(for w: NSWindow) -> ExplorerState? { registry.first { $0.window === w }?.state }
+
     /// When the app is cold-started by `explorermac <dir>`, SwiftUI also opens its default home window.
     /// Close those untouched default windows once the requested folder window exists.
     static func closeUntouchedDefaults(except keep: ExplorerState) {

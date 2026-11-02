@@ -14,6 +14,7 @@ All notable changes are documented here. The project follows [Semantic Versionin
 - Spotlight full-text search; accent- and Turkish-İ-insensitive name search
 - Windows keys: Backspace/Alt+arrows/mouse buttons 4–5 navigate, F3/F4/F5, Alt+D, Ctrl+E; Delete key trashes, Shift+Delete deletes permanently; Delete inside the Recycle Bin deletes permanently (with confirmation)
 - View › Show › File name extensions; click-pause-click to rename
+- Saved servers: *Connect to server…* can keep the server in the Network section; click to mount and open it here (password via the macOS keychain), right-click to disconnect or remove
 - Grouped by date: items ordered by full date and time
 - ⌘K "Go to folder" palette with recent folders, favourites and Spotlight folder search
 - Smart folders (recent documents, PDFs/images last 7 days, spreadsheets last 30 days)
