@@ -234,3 +234,8 @@
 "Couldn't connect to “%@” (error %d)." = "Povezivanje sa “%@” nije uspjelo (greška %d).";
 "Copy address" = "Kopiraj adresu";
 "Edit address" = "Uredi adresu";
+"Disk" = "Disk";
+"File system:" = "Sistem datoteka:";
+"Used space:" = "Zauzeti prostor:";
+"Free space:" = "Slobodni prostor:";
+"Capacity:" = "Kapacitet:";

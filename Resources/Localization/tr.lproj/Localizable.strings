@@ -234,3 +234,8 @@
 "Couldn't connect to “%@” (error %d)." = "“%@” sunucusuna bağlanılamadı (hata %d).";
 "Copy address" = "Adresi kopyala";
 "Edit address" = "Adresi düzenle";
+"Disk" = "Disk";
+"File system:" = "Dosya sistemi:";
+"Used space:" = "Kullanılan alan:";
+"Free space:" = "Boş alan:";
+"Capacity:" = "Kapasite:";

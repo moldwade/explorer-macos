@@ -155,7 +155,7 @@ struct SidebarView: View {
         })) {
             Section {
                 Label { Text("Home") } icon: { Image(systemName: "house.fill").foregroundStyle(Theme.accent) }
-                    .sidebarItem(Self.home.normalized, state)
+                    .sidebarItem(Self.home.normalized, state).contextMenu { SidebarFolderMenu(state: state, url: Self.home.normalized) }
                 Label { Text("Recycle Bin") } icon: { Image(systemName: "trash.fill").foregroundStyle(.secondary) }
                     .sidebarItem(ExplorerState.trashURL, state)
                     .dropDestination(for: URL.self) { urls, _ in state.trash(Set(urls)); return true }
@@ -182,13 +182,14 @@ struct SidebarView: View {
                 ForEach(defaults, id: \.url) { q in
                     Label { Text(L(q.title)) } icon: { Image(systemName: q.icon).foregroundStyle(q.color) }
                         .sidebarItem(q.url, state)
+                        .contextMenu { SidebarFolderMenu(state: state, url: q.url) }
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: q.url); return true }
                 }
                 ForEach(state.pinned.filter { p in !defaults.contains { $0.url == p } }, id: \.self) { url in
                     Label { Text(url.lastPathComponent) } icon: { Image(systemName: "folder.fill").foregroundStyle(Theme.folder) }
                         .sidebarItem(url, state)
                         .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: url); return true }
-                        .contextMenu { Button("Unpin from Quick access") { state.togglePin(url) } }
+                        .contextMenu { SidebarFolderMenu(state: state, url: url) }
                 }
             }
             Section("Smart folders") {
@@ -248,6 +249,7 @@ struct SidebarView: View {
                         Text(node.title).lineLimit(1)
                     }
                     .sidebarItem(node.url, state)
+                    .contextMenu { SidebarFolderMenu(state: state, url: node.url) }
                     .dropDestination(for: URL.self) { urls, _ in state.drop(urls, into: node.url); return true }
                 }
             }
@@ -255,6 +257,24 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .background(Theme.pane)
+    }
+}
+
+/// Right-click on a folder or disk in the navigation pane.
+struct SidebarFolderMenu: View {
+    let state: ExplorerState
+    let url: URL
+
+    var body: some View {
+        let isVolume = (try? url.resourceValues(forKeys: [.isVolumeKey]))?.isVolume == true
+        Button("Open") { state.go(to: url) }
+        Button("Open in new tab") { state.openInNewTab?(url) }
+        Divider()
+        Button(state.isPinned(url) ? "Unpin from Quick access" : "Pin to Quick access") { state.togglePin(url) }
+        Button("Copy as path") { state.copyPaths([url]) }
+        if isVolume && url.path != "/" { Button("Eject") { state.disconnect(url) } }
+        Divider()
+        Button("Properties") { state.propertiesTarget = [url] }
     }
 }
 
@@ -340,9 +360,14 @@ struct CrumbChevron: View {
     let current: URL
     @State private var open = false
     @State private var folders: [URL] = []
+    private static let rowHeight: CGFloat = 24
 
     var body: some View {
-        Button { open.toggle() } label: {
+        Button {
+            // Read the folders before opening: the popover sizes itself once, so loading later left it a sliver.
+            if !open { folders = TreeNode(url: parent).children?.map(\.url) ?? [] }
+            open.toggle()
+        } label: {
             Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.secondary).frame(width: 14, height: 20).contentShape(Rectangle())
         }
@@ -357,15 +382,15 @@ struct CrumbChevron: View {
                                 Text(u.lastPathComponent).fontWeight(u.normalized == current.normalized ? .semibold : .regular)
                                 Spacer(minLength: 20)
                             }
-                            .padding(.horizontal, 10).padding(.vertical, 4).contentShape(Rectangle())
+                            .padding(.horizontal, 10).frame(height: Self.rowHeight).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
                     if folders.isEmpty { Text("No subfolders").foregroundStyle(.secondary).padding(10) }
                 }
                 .padding(.vertical, 4)
             }
-            .frame(minWidth: 180, maxHeight: 360)
-            .task { folders = TreeNode(url: parent).children?.map(\.url) ?? [] }
+            .frame(minWidth: 200, maxWidth: 360)
+            .frame(height: min(CGFloat(max(folders.count, 1)) * Self.rowHeight + 8, 420))
         }
     }
 }

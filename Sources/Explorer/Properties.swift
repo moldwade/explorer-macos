@@ -8,9 +8,23 @@ struct PropInfo {
     var files = 0, folders = 0
     var created: Date?, modified: Date?, accessed: Date?
     var hidden = false, readOnly = false
+    /// Set when the item is a whole disk: Windows shows used/free space instead of counting every file.
+    var volume: (total: Int64, free: Int64, format: String)?
 
     nonisolated static func compute(_ urls: [URL]) -> PropInfo {
         var p = PropInfo()
+        if urls.count == 1, let u = urls.first,
+           let v = try? u.resourceValues(forKeys: [.isVolumeKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
+                                                    .volumeAvailableCapacityKey, .volumeLocalizedFormatDescriptionKey]),
+           v.isVolume == true {
+            let total = Int64(v.volumeTotalCapacity ?? 0)
+            let free = v.volumeAvailableCapacityForImportantUsage ?? Int64(v.volumeAvailableCapacity ?? 0)
+            p.volume = (total, free, v.volumeLocalizedFormatDescription ?? "")
+            p.name = FileManager.default.displayName(atPath: u.path)
+            p.kind = "Disk"
+            p.location = u.path
+            return p
+        }
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey, .isPackageKey]
         let fm = FileManager.default
         for u in urls {
@@ -78,6 +92,45 @@ struct PropertiesView: View {
                 Text(info.name).font(.system(size: 14, weight: .semibold)).lineLimit(2)
             }
             Divider()
+            if let vol = info.volume { volumeRows(vol) } else { fileRows }
+            Spacer(minLength: 0)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Apply") { apply() }.disabled(info.volume != nil)
+                Button("OK") { if info.volume == nil { apply() }; dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .font(.system(size: 12.5))
+        .padding(20).frame(width: 440, height: 470)
+        .task {
+            let list = urls
+            info = await Task.detached { PropInfo.compute(list) }.value
+            hidden = info.hidden; readOnly = info.readOnly; loaded = true
+        }
+    }
+
+    /// Disk page, like Windows: used, free, capacity and a bar.
+    @ViewBuilder private func volumeRows(_ v: (total: Int64, free: Int64, format: String)) -> some View {
+        let used = max(v.total - v.free, 0)
+        row("Type:", L("Disk"))
+        row("File system:", v.format)
+        Divider()
+        row("Used space:", bytes(used))
+        row("Free space:", bytes(v.free))
+        Divider()
+        row("Capacity:", bytes(v.total))
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.25))
+                RoundedRectangle(cornerRadius: 4).fill(Theme.accent)
+                    .frame(width: v.total > 0 ? g.size.width * CGFloat(used) / CGFloat(v.total) : 0)
+            }
+        }
+        .frame(height: 14).padding(.leading, 98)
+    }
+
+    @ViewBuilder private var fileRows: some View {
             row("Type:", info.kind)
             row("Location:", info.location)
             row("Size:", loaded ? bytes(info.size) : L("Calculating…"))
@@ -97,21 +150,6 @@ struct PropertiesView: View {
                     Toggle("Hidden", isOn: $hidden)
                 }
             }
-            Spacer(minLength: 0)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Apply") { apply() }
-                Button("OK") { apply(); dismiss() }.keyboardShortcut(.defaultAction)
-            }
-        }
-        .font(.system(size: 12.5))
-        .padding(20).frame(width: 440, height: 470)
-        .task {
-            let list = urls
-            info = await Task.detached { PropInfo.compute(list) }.value
-            hidden = info.hidden; readOnly = info.readOnly; loaded = true
-        }
     }
 
     private func apply() {
