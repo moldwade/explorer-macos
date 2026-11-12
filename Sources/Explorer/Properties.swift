@@ -67,10 +67,10 @@ struct PropInfo {
 struct PropertiesView: View {
     let state: ExplorerState
     let urls: [URL]
-    @State private var info = PropInfo()
-    @State private var loaded = false
-    @State private var hidden = false
-    @State private var readOnly = false
+    @ViewState private var info = PropInfo()
+    @ViewState private var loaded = false
+    @ViewState private var hidden = false
+    @ViewState private var readOnly = false
     @Environment(\.dismiss) private var dismiss
 
     private func bytes(_ n: Int64) -> String {
@@ -171,7 +171,7 @@ struct PropertiesView: View {
 
 struct DetailsPane: View {
     let state: ExplorerState
-    @State private var thumb: NSImage?
+    @ViewState private var thumb: NSImage?
 
     var body: some View {
         let sel = state.selectedItems

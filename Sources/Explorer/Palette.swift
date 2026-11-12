@@ -55,9 +55,9 @@ extension ExplorerState {
 /// ↑/↓ choose, Return opens, ⌘Return opens in a new tab, Esc closes.
 struct CommandPalette: View {
     let state: ExplorerState
-    @State private var query = ""
-    @State private var found: (query: String, urls: [URL]) = ("", [])
-    @State private var index = 0
+    @ViewState private var query = ""
+    @ViewState private var found: (query: String, urls: [URL]) = ("", [])
+    @ViewState private var index = 0
     @FocusState private var focused: Bool
 
     private var rows: [PaletteItem] {

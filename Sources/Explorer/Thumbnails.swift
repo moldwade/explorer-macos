@@ -44,7 +44,7 @@ final class ThumbCache {
 struct ThumbIcon: View {
     let item: FileItem
     let size: CGFloat
-    @State private var thumb: NSImage?
+    @ViewState private var thumb: NSImage?
 
     var body: some View {
         Group {

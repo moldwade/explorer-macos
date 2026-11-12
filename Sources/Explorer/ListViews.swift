@@ -128,7 +128,7 @@ struct RowGestures: ViewModifier {
 struct FolderDropTarget: ViewModifier {
     let state: ExplorerState
     let item: FileItem
-    @State private var targeted = false
+    @ViewState private var targeted = false
 
     func body(content: Content) -> some View {
         if item.isFolder {
@@ -263,7 +263,7 @@ func clickModifiers() -> (shift: Bool, toggle: Bool) {
 
 struct DetailsList: View {
     let state: ExplorerState
-    @State private var viewportH: CGFloat = 300
+    @ViewState private var viewportH: CGFloat = 300
 
     var body: some View {
         let groups = state.groups
@@ -353,7 +353,7 @@ private struct HeaderRow: View {
 private struct DetailRow: View {
     let state: ExplorerState
     let item: FileItem
-    @State private var hover = false
+    @ViewState private var hover = false
 
     var body: some View {
         let selected = state.selection.contains(item.url)
@@ -392,8 +392,8 @@ private struct DetailRow: View {
 
 struct IconsGrid: View {
     let state: ExplorerState
-    @State private var width: CGFloat = 800
-    @State private var viewportH: CGFloat = 300
+    @ViewState private var width: CGFloat = 800
+    @ViewState private var viewportH: CGFloat = 300
 
     private var mode: ViewMode { state.viewMode }
     private var horizontal: Bool { mode == .small || mode == .list }
@@ -439,7 +439,7 @@ struct IconsGrid: View {
         let state: ExplorerState
         let item: FileItem
         let mode: ViewMode
-        @State private var hover = false
+        @ViewState private var hover = false
 
         var body: some View {
             let selected = state.selection.contains(item.url)

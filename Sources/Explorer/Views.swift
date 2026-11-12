@@ -10,7 +10,7 @@ struct WindowSpec: Codable, Hashable {
 // MARK: - Root
 
 struct ContentView: View {
-    @State private var state: ExplorerState
+    @ViewState private var state: ExplorerState
     @FocusState private var searchFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
@@ -358,8 +358,8 @@ struct CrumbChevron: View {
     let state: ExplorerState
     let parent: URL
     let current: URL
-    @State private var open = false
-    @State private var folders: [URL] = []
+    @ViewState private var open = false
+    @ViewState private var folders: [URL] = []
     private static let rowHeight: CGFloat = 24
 
     var body: some View {
